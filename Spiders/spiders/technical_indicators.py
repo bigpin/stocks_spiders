@@ -11,20 +11,31 @@ class TechnicalIndicators:
         df.ta.kdj(high='high', low='low', close='close', period=period, signal=signal, append=True)
         return df
     
-    @staticmethod
-    def calculate_macd(df, fast=12, slow=26, signal=9):
+    @classmethod
+    def calculate_macd(cls, df, fast=12, slow=26, signal=9):
         """计算MACD指标"""
-        # 处理缺失值
-        df = df.dropna(subset=['close'])  # 确保 'close' 列没有缺失值
-
-        # 计算MACD
-        macd = df.ta.macd(close='close', fast=fast, slow=slow, signal=signal)
+        # 计算快线和慢线的指数移动平均
+        exp1 = df['close'].ewm(span=fast, adjust=False).mean()
+        exp2 = df['close'].ewm(span=slow, adjust=False).mean()
         
-        # pandas_ta生成的列名格式为MACD_12_26_9, MACDh_12_26_9, MACDs_12_26_9
-        # 将计算结果添加到原始DataFrame
-        df[f'MACD_{fast}_{slow}_{signal}'] = macd[f'MACD_{fast}_{slow}_{signal}']
-        df[f'MACDh_{fast}_{slow}_{signal}'] = macd[f'MACDh_{fast}_{slow}_{signal}']
-        df[f'MACDs_{fast}_{slow}_{signal}'] = macd[f'MACDs_{fast}_{slow}_{signal}']
+        # 计算MACD线（快线与慢线的差）
+        macd = exp1 - exp2
+        # 计算信号线（MACD的移动平均线）
+        signal_line = macd.ewm(span=signal, adjust=False).mean()
+        # 计算MACD柱状图（MACD线与信号线的差）
+        histogram = macd - signal_line
+        
+        # 创建一个新的DataFrame来存储结果
+        macd_df = pd.DataFrame({
+            f'MACD_{fast}_{slow}_{signal}': macd,
+            f'MACDs_{fast}_{slow}_{signal}': signal_line,
+            f'MACDh_{fast}_{slow}_{signal}': histogram
+        })
+        
+        # 直接将结果列添加到原始DataFrame
+        df[f'MACD_{fast}_{slow}_{signal}'] = macd
+        df[f'MACDs_{fast}_{slow}_{signal}'] = signal_line
+        df[f'MACDh_{fast}_{slow}_{signal}'] = histogram
         
         return df
     
@@ -65,8 +76,29 @@ class TechnicalIndicators:
     @staticmethod
     def calculate_vwap(df):
         """计算成交量加权平均价格"""
-        df.ta.vwap(high='high', low='low', close='close', volume='volume', append=True)
-        return df
+        try:
+            # 确保数据按日期排序
+            df = df.sort_index()
+            
+            # 计算典型价格 (typical price)
+            df['typical_price'] = (df['high'] + df['low'] + df['close']) / 3
+            
+            # 计算成交量乘以典型价格的累计和
+            cumulative_tp_vol = (df['typical_price'] * df['volume']).cumsum()
+            
+            # 计算成交量的累计和
+            cumulative_vol = df['volume'].cumsum()
+            
+            # 计算VWAP
+            df['VWAP'] = cumulative_tp_vol / cumulative_vol
+            
+            # 删除临时列
+            df = df.drop('typical_price', axis=1)
+            
+            return df
+        except Exception as e:
+            print(f"计算VWAP时出错: {str(e)}")
+            return df
     
     @staticmethod
     def calculate_atr(df, period=14):
@@ -83,8 +115,26 @@ class TechnicalIndicators:
     @staticmethod
     def calculate_cci(df, length=20):
         """计算顺势指标"""
-        df.ta.cci(high='high', low='low', close='close', length=length, append=True)
-        return df
+        try:
+            # 确保数据按日期排序
+            df = df.sort_index()
+            
+            # 计算典型价格
+            tp = (df['high'] + df['low'] + df['close']) / 3
+            
+            # 计算移动平均
+            ma = tp.rolling(window=length).mean()
+            
+            # 计算平均偏差
+            md = tp.rolling(window=length).apply(lambda x: abs(x - x.mean()).mean())
+            
+            # 计算CCI
+            df['CCI_20'] = (tp - ma) / (0.015 * md)
+            
+            return df
+        except Exception as e:
+            print(f"计算CCI时出错: {str(e)}")
+            return df
     
     @staticmethod
     def calculate_obv(df):

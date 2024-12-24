@@ -111,5 +111,29 @@ INDICATORS_CONFIG = {
     'boll': {
         'period': 20,   # 布林带周期
         'std': 2        # 标准差倍数
+    },
+    'ma': {
+        'periods': [5, 10, 20, 30, 60]  # 移动平均线周期
+    },
+    'ema': {
+        'periods': [5, 10, 20, 30, 60]  # 指数移动平均线周期
+    },
+    'wma': {
+        'periods': [5, 10, 20, 30, 60]  # 加权移动平均线周期
+    },
+    'vwap': {},  # 成交量加权平均价格，不需要参数
+    'atr': {
+        'period': 14    # ATR周期
+    },
+    'dmi': {
+        'length': 14,   # DMI周期
+        'signal': 14    # ADX平滑周期
+    },
+    'cci': {
+        'length': 20    # CCI周期
+    },
+    'obv': {},  # 能量潮指标，不需要参数
+    'roc': {
+        'length': 12    # ROC周期
     }
 }

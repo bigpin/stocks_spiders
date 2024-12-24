@@ -288,7 +288,7 @@ class StockKlineSpider(scrapy.Spider):
                 if self.calc_indicators:
                     df = TechnicalIndicators.calculate_all(df, INDICATORS_CONFIG)
                     
-                    # 分析KDJ信号
+                    # 分析信号
                     kdj_analysis = self.analyze_signals(df)
                     
                     # 只要有满足条件的信号写入文件
@@ -307,28 +307,69 @@ class StockKlineSpider(scrapy.Spider):
                             # 输出最近信号
                             self.write_to_signal_file("\n最近3天出现的高胜率信号：")
                             for signal in kdj_analysis['recent_signals']:
-                                # 根据信号类型构建指标数据字符串
-                                indicator_data = ""
-                                if signal['signal_type'].startswith('kdj'):
-                                    indicator_data = f"KDJ值: K={signal['k_value']:.2f}, D={signal['d_value']:.2f}, J={signal['j_value']:.2f}"
-                                elif signal['signal_type'].startswith('macd'):
-                                    indicator_data = f"MACD值: MACD={signal['macd']:.2f}, Signal={signal['macd_signal']:.2f}"
-                                elif signal['signal_type'].startswith('rsi'):
-                                    indicator_data = f"RSI值: RSI6={signal['RSI_6']:.2f}, RSI12={signal['RSI_12']:.2f}"
-                                elif signal['signal_type'].startswith('boll'):
-                                    indicator_data = f"BOLL值: 下轨={signal['BBL_20_2.0']:.2f}, 中轨={signal['BBM_20_2.0']:.2f}, 上轨={signal['BBU_20_2.0']:.2f}"
-                                
-                                signal_info = (
-                                    f"股票: {data['data']['name']}({stock_code}), "
-                                    f"日期: {signal['date']}, "
-                                    f"信号: {signal['signal']}, "
-                                    f"信号胜率: {signal['signal_success_rate']:.2f}% "
-                                    f"(历史出现: {signal['signal_total']}次), "
-                                    f"整胜率: {signal['overall_success_rate']:.2f}%, "
-                                    f"收盘价: {signal['close']:.2f}, "
-                                    f"{indicator_data}"
-                                )
-                                self.write_to_signal_file(signal_info)
+                                # 输出信号相关信息
+                                if signal:
+                                    signal_info = []
+                                    
+                                    # 基础信息
+                                    signal_info.extend([
+                                        f"日期: {signal['date']}",
+                                        f"信号类型: {signal['signal_type']}",
+                                        f"信号: {signal['signal']}",
+                                        f"信号胜率: {signal['signal_success_rate']:.2f}%",
+                                        f"(历史出现: {signal['signal_total']}次)",
+                                        f"整体胜率: {signal['overall_success_rate']:.2f}%",
+                                        f"收盘价: {signal['close']:.2f}"
+                                    ])
+                                    
+                                    # 根据信号类型添加对应的指标信息
+                                    if signal['signal_type'].startswith('kdj'):
+                                        signal_info.extend([
+                                            f"K值: {signal.get('k_value', 'N/A'):.2f}",
+                                            f"D值: {signal.get('d_value', 'N/A'):.2f}",
+                                            f"J值: {signal.get('j_value', 'N/A'):.2f}"
+                                        ])
+                                    elif signal['signal_type'].startswith('macd'):
+                                        signal_info.extend([
+                                            f"MACD: {signal.get('macd', 'N/A'):.4f}",
+                                            f"MACD信号: {signal.get('macd_signal', 'N/A'):.4f}"
+                                        ])
+                                    elif signal['signal_type'].startswith('rsi'):
+                                        signal_info.extend([
+                                            f"RSI(6): {signal.get('RSI_6', 'N/A'):.2f}",
+                                            f"RSI(12): {signal.get('RSI_12', 'N/A'):.2f}"
+                                        ])
+                                    elif signal['signal_type'].startswith('boll'):
+                                        signal_info.extend([
+                                            f"布林下轨: {signal.get('BBL_20_2.0', 'N/A'):.2f}",
+                                            f"布林中轨: {signal.get('BBM_20_2.0', 'N/A'):.2f}",
+                                            f"布林上轨: {signal.get('BBU_20_2.0', 'N/A'):.2f}"
+                                        ])
+                                    elif signal['signal_type'].startswith('ma'):
+                                        signal_info.extend([
+                                            f"MA5: {signal.get('SMA_5', 'N/A'):.2f}",
+                                            f"MA20: {signal.get('SMA_20', 'N/A'):.2f}"
+                                        ])
+                                    elif signal['signal_type'].startswith('dmi'):
+                                        signal_info.extend([
+                                            f"DMP(14): {signal.get('DMP_14', 'N/A'):.2f}",
+                                            f"DMN(14): {signal.get('DMN_14', 'N/A'):.2f}",
+                                            f"ADX(14): {signal.get('ADX_14', 'N/A'):.2f}"
+                                        ])
+                                    elif signal['signal_type'].startswith('cci'):
+                                        signal_info.extend([
+                                            f"CCI(20): {signal.get('CCI_20', 'N/A'):.2f}"
+                                        ])
+                                    elif signal['signal_type'].startswith('roc'):
+                                        signal_info.extend([
+                                            f"ROC(12): {signal.get('ROC_12', 'N/A'):.2f}"
+                                        ])
+                                    
+                                    # 将所有信息用逗号连接并输出
+                                    signal_info_str = ", ".join(signal_info)
+                                    self.logger.info(signal_info_str)
+                                    # 同时写入信号文件
+                                    self.write_to_signal_file(f"股票: {data['data']['name']}({stock_code}), {signal_info_str}")
                             self.write_to_signal_file("-" * 80)  # 分隔线
                             
                             # 同时保持控制台输出
@@ -442,21 +483,35 @@ class StockKlineSpider(scrapy.Spider):
             self.conn.rollback()
     
     def analyze_signals(self, df):
-        """
-        分析多个技术指标的信号
-        """
+        """分析多个技术指标的信号"""
         signals = []
         signal_stats = {
+            # KDJ信号
             'kdj_oversold': {'success': 0, 'total': 0},
             'kdj_golden_cross': {'success': 0, 'total': 0},
             'kdj_divergence': {'success': 0, 'total': 0},
+            # MACD信号
             'macd_golden_cross': {'success': 0, 'total': 0},
             'macd_zero_cross': {'success': 0, 'total': 0},
             'macd_divergence': {'success': 0, 'total': 0},
+            # RSI信号
             'rsi_oversold': {'success': 0, 'total': 0},
             'rsi_golden_cross': {'success': 0, 'total': 0},
+            # BOLL信号
             'boll_bottom_touch': {'success': 0, 'total': 0},
-            'boll_width_expand': {'success': 0, 'total': 0}
+            'boll_width_expand': {'success': 0, 'total': 0},
+            # MA信号
+            'ma_golden_cross': {'success': 0, 'total': 0},  # 短期均线上穿长期均线
+            'ma_support': {'success': 0, 'total': 0},       # 价格在均线支撑位反弹
+            # DMI信号
+            'dmi_golden_cross': {'success': 0, 'total': 0}, # DI+上穿DI-
+            'dmi_adx_strong': {'success': 0, 'total': 0},   # ADX大于某个阈值，表示趋势强烈
+            # CCI信号
+            'cci_oversold': {'success': 0, 'total': 0},     # CCI超卖
+            'cci_zero_cross': {'success': 0, 'total': 0},   # CCI上穿零轴
+            # ROC信号
+            'roc_zero_cross': {'success': 0, 'total': 0},   # ROC上穿零轴
+            'roc_divergence': {'success': 0, 'total': 0}    # ROC底背离
         }
         
         # 确保数据按日期排序
@@ -525,6 +580,43 @@ class StockKlineSpider(scrapy.Spider):
             elif (current_row['BBB_20_2.0'] > prev_row['BBB_20_2.0'] * 1.1):  # 带宽扩张
                 signal = 'BOLL带宽扩张'
                 signal_type = 'boll_width_expand'
+            
+            # MA信号判断
+            elif (prev_row['SMA_5'] < prev_row['SMA_20'] and 
+                  current_row['SMA_5'] > current_row['SMA_20']):
+                signal = 'MA5上穿MA20'
+                signal_type = 'ma_golden_cross'
+            elif (current_row['close'] > current_row['SMA_20'] * 0.99 and 
+                  current_row['close'] < current_row['SMA_20'] * 1.01):
+                signal = 'MA20支撑'
+                signal_type = 'ma_support'
+            
+            # DMI信号判断
+            elif (prev_row['DMP_14'] < prev_row['DMN_14'] and 
+                  current_row['DMP_14'] > current_row['DMN_14'] and 
+                  current_row['ADX_14'] > 20):
+                signal = 'DMI金叉'
+                signal_type = 'dmi_golden_cross'
+            elif current_row['ADX_14'] > 30:  # ADX大于30表示趋势强烈
+                signal = 'ADX强势'
+                signal_type = 'dmi_adx_strong'
+            
+            # CCI信号判断
+            elif current_row['CCI_20'] < -100:  # CCI超卖
+                signal = 'CCI超卖'
+                signal_type = 'cci_oversold'
+            elif (prev_row['CCI_20'] < 0 and current_row['CCI_20'] > 0):  # CCI上穿零轴
+                signal = 'CCI零轴上穿'
+                signal_type = 'cci_zero_cross'
+            
+            # ROC信号判断
+            elif (prev_row['ROC_12'] < 0 and current_row['ROC_12'] > 0):  # ROC上穿零轴
+                signal = 'ROC零轴上穿'
+                signal_type = 'roc_zero_cross'
+            elif (current_row['close'] < df.iloc[i-5:i]['close'].min() and 
+                  current_row['ROC_12'] > df.iloc[i-5:i]['ROC_12'].min()):  # ROC底背离
+                signal = 'ROC底背离'
+                signal_type = 'roc_divergence'
 
             if signal:
                 signal_stats[signal_type]['total'] += 1
@@ -549,6 +641,13 @@ class StockKlineSpider(scrapy.Spider):
                     'j_value': current_row.get('J_9_3'),
                     'macd': current_row.get('MACD_12_26_9'),
                     'macd_signal': current_row.get('MACDs_12_26_9'),
+                    'rsi_6': current_row.get('RSI_6'),
+                    'rsi_12': current_row.get('RSI_12'),
+                    'cci': current_row.get('CCI_20'),
+                    'roc': current_row.get('ROC_12'),
+                    'dmi_plus': current_row.get('DMP_14'),
+                    'dmi_minus': current_row.get('DMN_14'),
+                    'adx': current_row.get('ADX_14'),
                     'max_return': max_future_return,
                     'success': success
                 })
@@ -577,11 +676,12 @@ class StockKlineSpider(scrapy.Spider):
                 if i > 0:
                     prev_row = last_3_days.iloc[i-1]
                 else:
-                    prev_row = df.iloc[-4]  # 获取第4天前的数据作为首日的前一天
+                    prev_row = df.iloc[-4]  # 获取第4天前的数据为首日的前一天
                 
                 signal = None
                 signal_type = None
                 
+                # [这里重复上面的信号判断逻辑，但使用last_3_days的数据]
                 # KDJ信号判断
                 if current_row['K_9_3'] < 20 and current_row['D_9_3'] < 20:
                     signal = 'KDJ超卖'
@@ -594,19 +694,24 @@ class StockKlineSpider(scrapy.Spider):
                       current_row['K_9_3'] > df.iloc[-3:].iloc[:i+1]['K_9_3'].min()):
                     signal = 'KDJ底背离'
                     signal_type = 'kdj_divergence'
+                    
                 # MACD信号判断
-                elif (prev_row['MACD_12_26_9'] < prev_row['MACDs_12_26_9'] and 
+                elif (prev_row.get('MACD_12_26_9') is not None and 
+                      prev_row['MACD_12_26_9'] < prev_row['MACDs_12_26_9'] and 
                       current_row['MACD_12_26_9'] > current_row['MACDs_12_26_9']):
                     signal = 'MACD金叉'
                     signal_type = 'macd_golden_cross'
-                elif (prev_row['MACD_12_26_9'] < 0 and current_row['MACD_12_26_9'] > 0):
+                elif (prev_row.get('MACD_12_26_9') is not None and 
+                      prev_row['MACD_12_26_9'] < 0 and 
+                      current_row['MACD_12_26_9'] > 0):
                     signal = 'MACD零轴上穿'
                     signal_type = 'macd_zero_cross'
                 elif (current_row['close'] < df.iloc[-3:].iloc[:i+1]['close'].min() and 
                       current_row['MACD_12_26_9'] > df.iloc[-3:].iloc[:i+1]['MACD_12_26_9'].min()):
                     signal = 'MACD底背离'
                     signal_type = 'macd_divergence'
-                # RSI号判断
+                    
+                # RSI信号判断
                 elif current_row['RSI_6'] < 20:
                     signal = 'RSI超卖'
                     signal_type = 'rsi_oversold'
@@ -614,14 +719,86 @@ class StockKlineSpider(scrapy.Spider):
                       current_row['RSI_6'] > current_row['RSI_12']):
                     signal = 'RSI金叉'
                     signal_type = 'rsi_golden_cross'
+                    
                 # BOLL信号判断
-                elif (current_row['close'] <= current_row['BBL_20_2.0'] * 1.01):
+                elif (current_row['close'] <= current_row['BBL_20_2.0'] * 1.01):  # 接近下轨
                     signal = 'BOLL下轨支撑'
                     signal_type = 'boll_bottom_touch'
-                elif (current_row['BBB_20_2.0'] > prev_row['BBB_20_2.0'] * 1.1):
+                elif (current_row['BBB_20_2.0'] > prev_row['BBB_20_2.0'] * 1.1):  # 带宽扩张
                     signal = 'BOLL带宽扩张'
                     signal_type = 'boll_width_expand'
                 
+                # MA信号判断
+                elif (prev_row['SMA_5'] < prev_row['SMA_20'] and 
+                      current_row['SMA_5'] > current_row['SMA_20']):
+                    signal = 'MA5上穿MA20'
+                    signal_type = 'ma_golden_cross'
+                elif (current_row['close'] > current_row['SMA_20'] * 0.99 and 
+                      current_row['close'] < current_row['SMA_20'] * 1.01):
+                    signal = 'MA20支撑'
+                    signal_type = 'ma_support'
+                
+                # DMI信号判断
+                elif (prev_row['DMP_14'] < prev_row['DMN_14'] and 
+                      current_row['DMP_14'] > current_row['DMN_14'] and 
+                      current_row['ADX_14'] > 20):
+                    signal = 'DMI金叉'
+                    signal_type = 'dmi_golden_cross'
+                elif current_row['ADX_14'] > 30:  # ADX大于30表示趋势强烈
+                    signal = 'ADX强势'
+                    signal_type = 'dmi_adx_strong'
+                
+                # CCI信号判断
+                elif current_row['CCI_20'] < -100:  # CCI超卖
+                    signal = 'CCI超卖'
+                    signal_type = 'cci_oversold'
+                elif (prev_row['CCI_20'] < 0 and current_row['CCI_20'] > 0):  # CCI上穿零轴
+                    signal = 'CCI零轴上穿'
+                    signal_type = 'cci_zero_cross'
+                
+                # ROC信号判断
+                elif (prev_row['ROC_12'] < 0 and current_row['ROC_12'] > 0):  # ROC上穿零轴
+                    signal = 'ROC零轴上穿'
+                    signal_type = 'roc_zero_cross'
+                elif (current_row['close'] < df.iloc[-3:].iloc[:i+1]['close'].min() and 
+                      current_row['ROC_12'] > df.iloc[-3:].iloc[:i+1]['ROC_12'].min()):  # ROC底背离
+                    signal = 'ROC底背离'
+                    signal_type = 'roc_divergence'
+
+                if signal:
+                    signal_stats[signal_type]['total'] += 1
+                    
+                    # 检查未来10天是否有5%以上涨幅
+                    future_prices_10 = df.iloc[i+1:i+11]['close']
+                    max_future_return = ((future_prices_10.max() - current_row['close']) / 
+                                           current_row['close'] * 100)
+                    
+                    success = max_future_return >= 5
+                    
+                    if success:
+                        signal_stats[signal_type]['success'] += 1
+                        
+                    signals.append({
+                        'date': df.index[i],
+                        'signal_type': signal_type,
+                        'signal': signal,
+                        'close': current_row['close'],
+                        'k_value': current_row.get('K_9_3'),
+                        'd_value': current_row.get('D_9_3'),
+                        'j_value': current_row.get('J_9_3'),
+                        'macd': current_row.get('MACD_12_26_9'),
+                        'macd_signal': current_row.get('MACDs_12_26_9'),
+                        'rsi_6': current_row.get('RSI_6'),
+                        'rsi_12': current_row.get('RSI_12'),
+                        'cci': current_row.get('CCI_20'),
+                        'roc': current_row.get('ROC_12'),
+                        'dmi_plus': current_row.get('DMP_14'),
+                        'dmi_minus': current_row.get('DMN_14'),
+                        'adx': current_row.get('ADX_14'),
+                        'max_return': max_future_return,
+                        'success': success
+                    })
+
                 if (signal and 
                     signal_stats[signal_type]['total'] > 8 and 
                     success_rates[signal_type]['success_rate'] >= 60 and  
@@ -660,6 +837,25 @@ class StockKlineSpider(scrapy.Spider):
                             'BBL_20_2.0': current_row.get('BBL_20_2.0'),
                             'BBM_20_2.0': current_row.get('BBM_20_2.0'),
                             'BBU_20_2.0': current_row.get('BBU_20_2.0')
+                        })
+                    elif signal_type.startswith('ma'):
+                        signal_data.update({
+                            'SMA_5': current_row.get('SMA_5'),
+                            'SMA_20': current_row.get('SMA_20')
+                        })
+                    elif signal_type.startswith('dmi'):
+                        signal_data.update({
+                            'DMP_14': current_row.get('DMP_14'),
+                            'DMN_14': current_row.get('DMN_14'),
+                            'ADX_14': current_row.get('ADX_14')
+                        })
+                    elif signal_type.startswith('cci'):
+                        signal_data.update({
+                            'CCI_20': current_row.get('CCI_20')
+                        })
+                    elif signal_type.startswith('roc'):
+                        signal_data.update({
+                            'ROC_12': current_row.get('ROC_12')
                         })
                     
                     recent_signals.append(signal_data)
