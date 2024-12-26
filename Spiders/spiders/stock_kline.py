@@ -16,51 +16,51 @@ from datetime import datetime, timedelta
 class StockKlineSpider(scrapy.Spider):
     name = "stock_kline"
     allowed_domains = ["eastmoney.com", "push2his.eastmoney.com"]
-    custom_settings = {
-            'FEEDS': {
-                'kline_data.csv': {
-                    'format': 'csv',
-                    'encoding': 'utf-8-sig',
-                    'store_empty': False,
-                    'overwrite': True,
-                    'fields': [
-                        'stock_code', 'date', 'open', 'high', 'low', 'close', 
-                        'volume', 'amount', 'amplitude', 'change_rate', 'change_amount', 
-                        'turnover', 'KST_9_3', 'DST_9_3', 'JST_9_3', 'MACD_12_26_9', 
-                        'MACDh_12_26_9', 'MACDs_12_26_9', 'RSI_6', 'RSI_12', 'RSI_24', 
-                        'BBL_20_2.0', 'BBM_20_2.0', 'BBU_20_2.0', 'BBB_20_2.0', 'BBP_20_2.0'
-                    ],
-                    'headers': {
-                        'stock_code': '股票代码',
-                        'date': '日期',
-                        'open': '开盘价',
-                        'high': '最高价',
-                        'low': '最低价',
-                        'close': '收盘价',
-                        'volume': '成交量',
-                        'amount': '成交额',
-                        'amplitude': '振幅',
-                        'change_rate': '涨跌幅',
-                        'change_amount': '涨跌额',
-                        'turnover': '换手率',
-                        'KST_9_3': 'K值',
-                        'DST_9_3': 'D值',
-                        'JST_9_3': 'J值',
-                        'MACD_12_26_9': 'MACD',
-                        'MACDh_12_26_9': 'MACD柱',
-                        'MACDs_12_26_9': 'MACD信号',
-                        'RSI_6': 'RSI6',
-                        'RSI_12': 'RSI12',
-                        'RSI_24': 'RSI24',
-                        'BBL_20_2.0': '布林下轨',
-                        'BBM_20_2.0': '布林中轨',
-                        'BBU_20_2.0': '布林上轨',
-                        'BBB_20_2.0': '布林带宽',
-                        'BBP_20_2.0': '布林带百分比'
-                    }
-                }
-            }
-        }
+    # custom_settings = {
+    #         'FEEDS': {
+    #             'kline_data.csv': {
+    #                 'format': 'csv',
+    #                 'encoding': 'utf-8-sig',
+    #                 'store_empty': False,
+    #                 'overwrite': True,
+    #                 'fields': [
+    #                     'stock_code', 'date', 'open', 'high', 'low', 'close', 
+    #                     'volume', 'amount', 'amplitude', 'change_rate', 'change_amount', 
+    #                     'turnover', 'KST_9_3', 'DST_9_3', 'JST_9_3', 'MACD_12_26_9', 
+    #                     'MACDh_12_26_9', 'MACDs_12_26_9', 'RSI_6', 'RSI_12', 'RSI_24', 
+    #                     'BBL_20_2.0', 'BBM_20_2.0', 'BBU_20_2.0', 'BBB_20_2.0', 'BBP_20_2.0'
+    #                 ],
+    #                 'headers': {
+    #                     'stock_code': '股票代码',
+    #                     'date': '日期',
+    #                     'open': '开盘价',
+    #                     'high': '最高价',
+    #                     'low': '最低价',
+    #                     'close': '收盘价',
+    #                     'volume': '成交量',
+    #                     'amount': '成交额',
+    #                     'amplitude': '振幅',
+    #                     'change_rate': '涨跌幅',
+    #                     'change_amount': '涨跌额',
+    #                     'turnover': '换手率',
+    #                     'KST_9_3': 'K值',
+    #                     'DST_9_3': 'D值',
+    #                     'JST_9_3': 'J值',
+    #                     'MACD_12_26_9': 'MACD',
+    #                     'MACDh_12_26_9': 'MACD柱',
+    #                     'MACDs_12_26_9': 'MACD信号',
+    #                     'RSI_6': 'RSI6',
+    #                     'RSI_12': 'RSI12',
+    #                     'RSI_24': 'RSI24',
+    #                     'BBL_20_2.0': '布林下轨',
+    #                     'BBM_20_2.0': '布林中轨',
+    #                     'BBU_20_2.0': '布林上轨',
+    #                     'BBB_20_2.0': '布林带宽',
+    #                     'BBP_20_2.0': '布林带百分比'
+    #                 }
+    #             }
+    #         }
+    #     }
     
     def __init__(self, stock_codes=None, use_file=False, stock_file='stock_list.txt', 
                  kline_type='daily', fq_type='forward', start_date=None, end_date=None, 
