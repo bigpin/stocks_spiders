@@ -470,45 +470,55 @@ class StockKlineSpider(scrapy.Spider):
                             # 将created_at转换为日期格式（去掉时分秒）
                             created_date = datetime.strptime(created_at, "%Y-%m-%d %H:%M:%S").strftime("%Y-%m-%d")
                             
-                            # 获取created_at日期在DataFrame中的位置
-                            created_idx = df.index.get_loc(created_date)
-                            # 获取created_at日期后一天到14天内的数据
-                            future_data = df.iloc[created_idx + 1:created_idx + 15]  # +15是因为切片是左闭右开
+                            # 确保DataFrame的索引是datetime类型
+                            if not isinstance(df.index, pd.DatetimeIndex):
+                                df.index = pd.to_datetime(df.index)
                             
-                            if not future_data.empty:
-                                # 确保close列中没有None值
-                                future_data = future_data[future_data['close'].notna()]
+                            try:
+                                # 找到最接近的交易日
+                                created_date = pd.to_datetime(created_date)
+                                nearest_date = df.index[df.index >= created_date][0]
+                                created_idx = df.index.get_loc(nearest_date)
+                                
+                                # 获取从nearest_date当天到后续14天的数据（包含当天）
+                                future_data = df.iloc[created_idx:created_idx + 15]  # 包含当天，所以不需要+1
                                 
                                 if not future_data.empty:
-                                    # 计算最高价格
-                                    highest_price = future_data['close'].max()
-                                    highest_price_date = future_data['close'].idxmax()
-                                    highest_change_rate = ((highest_price - initial_price) / initial_price * 100)
-                                    highest_days = (datetime.strptime(highest_price_date, "%Y-%m-%d") - 
-                                                  datetime.strptime(created_date, "%Y-%m-%d")).days
+                                    # 确保close列中没有None值
+                                    future_data = future_data[future_data['close'].notna()]
                                     
-                                    # 计算最低价格
-                                    lowest_price = future_data['close'].min()
-                                    lowest_price_date = future_data['close'].idxmin()
-                                    lowest_change_rate = ((lowest_price - initial_price) / initial_price * 100)
-                                    lowest_days = (datetime.strptime(lowest_price_date, "%Y-%m-%d") - 
-                                                 datetime.strptime(created_date, "%Y-%m-%d")).days
-                                    
-                                    # 总是更新14天内的最高和最低价格
-                                    self.cursor.execute('''
-                                        UPDATE stock_data
-                                        SET highest_price=?, 
-                                            highest_price_date=?,
-                                            highest_price_change_rate=?,
-                                            highest_price_days=?,
-                                            lowest_price=?,
-                                            lowest_price_date=?,
-                                            lowest_price_change_rate=?,
-                                            lowest_price_days=?
-                                        WHERE id=?
-                                    ''', (highest_price, highest_price_date, highest_change_rate, highest_days,
-                                         lowest_price, lowest_price_date, lowest_change_rate, lowest_days,
-                                         record_id))
+                                    if not future_data.empty:
+                                        # 计算最高价格
+                                        highest_price = future_data['close'].max()
+                                        highest_price_date = future_data['close'].idxmax().strftime("%Y-%m-%d")
+                                        highest_change_rate = ((highest_price - initial_price) / initial_price * 100)
+                                        highest_days = (pd.to_datetime(highest_price_date) - created_date).days
+                                        
+                                        # 计算最低价格
+                                        lowest_price = future_data['close'].min()
+                                        lowest_price_date = future_data['close'].idxmin().strftime("%Y-%m-%d")
+                                        lowest_change_rate = ((lowest_price - initial_price) / initial_price * 100)
+                                        lowest_days = (pd.to_datetime(lowest_price_date) - created_date).days
+                                        
+                                        # 总是更新14天内的最高和最低价格
+                                        self.cursor.execute('''
+                                            UPDATE stock_data
+                                            SET highest_price=?, 
+                                                highest_price_date=?,
+                                                highest_price_change_rate=?,
+                                                highest_price_days=?,
+                                                lowest_price=?,
+                                                lowest_price_date=?,
+                                                lowest_price_change_rate=?,
+                                                lowest_price_days=?
+                                            WHERE id=?
+                                        ''', (highest_price, highest_price_date, highest_change_rate, highest_days,
+                                             lowest_price, lowest_price_date, lowest_change_rate, lowest_days,
+                                             record_id))
+                            except IndexError:
+                                self.logger.warning(f"记录ID {record_id} 没有找到对应的交易日数据")
+                            except Exception as e:
+                                self.logger.error(f"处理日期时出错: {created_at}, 错误: {str(e)}")
                         except (KeyError, ValueError) as e:
                             self.logger.error(f"处理日期时出错: {created_at}, 错误: {str(e)}")
                             continue
