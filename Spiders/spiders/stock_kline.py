@@ -1,6 +1,7 @@
 import scrapy
 import json
 import pandas as pd
+from datetime import datetime, timedelta
 from items import EastMoneyItem
 from .stock_config import (
     KLINE_API,
@@ -11,7 +12,6 @@ from .stock_config import (
 )
 from .technical_indicators import TechnicalIndicators
 import sqlite3
-from datetime import datetime, timedelta
 
 class StockKlineSpider(scrapy.Spider):
     name = "stock_kline"
@@ -67,6 +67,9 @@ class StockKlineSpider(scrapy.Spider):
                  calc_indicators=True, *args, **kwargs):
         super(StockKlineSpider, self).__init__(*args, **kwargs)
         
+        # 获取脚本运行时的时间
+        self.current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        
         # 从文件读取股票代码或使用传入的股票代码
         if use_file and use_file.lower() == 'true':
             try:
@@ -85,7 +88,6 @@ class StockKlineSpider(scrapy.Spider):
         self.fq_type = fq_type
         
         # 设置默认时间范围为最近一年
-        from datetime import datetime, timedelta
         current_date = datetime.now()
         one_year_ago = current_date - timedelta(days=365)
         
@@ -140,7 +142,12 @@ class StockKlineSpider(scrapy.Spider):
         self.conn.commit()
     
     def start_requests(self):
+        count = 0
         for stock_code in self.stock_codes:
+            count += 1
+            #if count > 100: # 限制请求数量
+            #    break
+            self.logger.info(f"开始请求第{count}个股票 {stock_code} 的数据")
             # 获取股票代码前缀对应的数字
             prefix = STOCK_PREFIX_MAP.get(stock_code[:2])
             if not prefix:
@@ -170,9 +177,9 @@ class StockKlineSpider(scrapy.Spider):
             )
     
     def write_to_signal_file(self, content):
-        """将内容写入信号文"""
+        """将内容写入信号文件"""
         with open(self.signal_file, 'a', encoding='utf-8') as f:
-            f.write(content + "\n")
+            f.write(f"{content}\n")
         # 同时保存到数据库
         # self.save_to_database(content)
     
@@ -204,7 +211,7 @@ class StockKlineSpider(scrapy.Spider):
                                 try:
                                     date = datetime.strptime(date_str, "%Y%m%d").strftime("%Y-%m-%d")
                                 except ValueError:
-                                    self.logger.error(f"无法解析日期格式: {date_str}")
+                                    self.logger.error(f"▲ 无法解析日期格式: {date_str}")
                                     continue
                         else:
                             continue
@@ -238,17 +245,24 @@ class StockKlineSpider(scrapy.Spider):
                                         success_rate, initial_price, created_at
                                     )
                                     VALUES (?, ?, ?, ?, ?, ?, ?)
-                                ''', (stock_code, stock_name, date, signal, 
-                                     success_rate, initial_price, current_time))
+                                ''', (
+                                    stock_code,
+                                    stock_name,
+                                    signal['date'].strftime("%Y-%m-%d"),
+                                    signal['signal'],
+                                    round(signal['signal_success_rate'], 2),
+                                    round(signal['close'], 2),
+                                    current_time
+                                ))
                             
                     except (IndexError, ValueError) as e:
-                        self.logger.error(f"解析信号行时出错: {line}")
+                        self.logger.error(f"▲ 解析信号行时出错: {line}")
                         self.logger.error(str(e))
                         continue  # 跳过这条记录，继续处理下一条
             
             self.conn.commit()
         except Exception as e:
-            self.logger.error(f"保存到数据库时出错: {str(e)}")
+            self.logger.error(f"▲ 保存到数据库时出错: {str(e)}")
             self.conn.rollback()  # 发生错误时回滚事务
     
     def parse(self, response):
@@ -293,11 +307,14 @@ class StockKlineSpider(scrapy.Spider):
                     
                     # 只要有满足条件的信号写入文件
                     if kdj_analysis['recent_signals']:
-                        # 统计最近5天内的不同信号类型数量
-                        recent_signal_types = set(signal['signal'] for signal in kdj_analysis['recent_signals'])
+                        # 统计信号种类和数量
+                        signal_type_count = {}
+                        for signal in kdj_analysis['recent_signals']:
+                            signal_type = signal['signal']
+                            signal_type_count[signal_type] = signal_type_count.get(signal_type, 0) + 1
                         
-                        # 有当出现三种以上不同信号时才输出
-                        if len(recent_signal_types) >= 6:
+                        # 有当出现六种以上不同信号时才输出
+                        if len(signal_type_count) > 6:
                             # 写入文件
                             self.write_to_signal_file(f"\n股票 {data['data']['name']}({stock_code}) 股票信号分析结果")
                             self.write_to_signal_file(f"总体成功率: {kdj_analysis['overall_success_rate']:.2f}%")
@@ -306,40 +323,34 @@ class StockKlineSpider(scrapy.Spider):
                             
                             # 输出最近信号
                             self.write_to_signal_file("\n最近3天出现的高胜率信号：")
+                            self.write_to_signal_file(f"共有{len(kdj_analysis['recent_signals'])}个信号，{len(signal_type_count)}种类型：")
+                            # 输出每种信号的数量
+                            for signal_type, count in signal_type_count.items():
+                                self.write_to_signal_file(f"- {signal_type}: {count}个")
                             
-                            # 直接保存所有满足条件的信号到数据库
-                            current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                            # 批量处理数据库插入
+                            signals_to_insert = []
                             for signal in kdj_analysis['recent_signals']:
-                                try:
-                                    # 检查是否已存在相同记录
-                                    self.cursor.execute('''
-                                        SELECT COUNT(*) FROM stock_data 
-                                        WHERE stock_code=? AND date=? AND signal=?
-                                    ''', (stock_code, signal['date'].strftime("%Y-%m-%d"), signal['signal']))
-                                    
-                                    if self.cursor.fetchone()[0] == 0:
-                                        # 插入新记录
-                                        self.cursor.execute('''
-                                            INSERT INTO stock_data (
-                                                stock_code, stock_name, date, signal, 
-                                                success_rate, initial_price, created_at
-                                            )
-                                            VALUES (?, ?, ?, ?, ?, ?, ?)
-                                        ''', (
-                                            stock_code,
-                                            data['data']['name'],
-                                            signal['date'].strftime("%Y-%m-%d"),
-                                            signal['signal'],
-                                            signal['signal_success_rate'],
-                                            signal['close'],
-                                            current_time
-                                        ))
-                                except Exception as e:
-                                    self.logger.error(f"保存信号到数据库时出错: {str(e)}")
-                                    continue
-                            
-                            # 提交数据库事务
-                            self.conn.commit()
+                                signals_to_insert.append((
+                                    stock_code,
+                                    data['data']['name'],
+                                    signal['date'].strftime("%Y-%m-%d"),
+                                    signal['signal'],
+                                    round(signal['signal_success_rate'], 2),
+                                    round(signal['close'], 2),
+                                    self.current_time
+                                ))
+
+                            if signals_to_insert:
+                                # 使用executemany一次性插入多条记录
+                                self.cursor.executemany('''
+                                    INSERT OR IGNORE INTO stock_data (
+                                        stock_code, stock_name, date, signal, 
+                                        success_rate, initial_price, created_at
+                                    )
+                                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                                ''', signals_to_insert)
+                                self.conn.commit()
                             
                             # 输出信号到文件
                             for signal in kdj_analysis['recent_signals']:
@@ -489,15 +500,15 @@ class StockKlineSpider(scrapy.Spider):
                                     
                                     if not future_data.empty:
                                         # 计算最高价格
-                                        highest_price = future_data['close'].max()
+                                        highest_price = round(future_data['close'].max(), 2)
                                         highest_price_date = future_data['close'].idxmax().strftime("%Y-%m-%d")
-                                        highest_change_rate = ((highest_price - initial_price) / initial_price * 100)
+                                        highest_change_rate = round(((highest_price - initial_price) / initial_price * 100), 2)
                                         highest_days = (pd.to_datetime(highest_price_date) - created_date).days
                                         
                                         # 计算最低价格
-                                        lowest_price = future_data['close'].min()
+                                        lowest_price = round(future_data['close'].min(), 2)
                                         lowest_price_date = future_data['close'].idxmin().strftime("%Y-%m-%d")
-                                        lowest_change_rate = ((lowest_price - initial_price) / initial_price * 100)
+                                        lowest_change_rate = round(((lowest_price - initial_price) / initial_price * 100), 2)
                                         lowest_days = (pd.to_datetime(lowest_price_date) - created_date).days
                                         
                                         # 总是更新14天内的最高和最低价格
@@ -651,8 +662,8 @@ class StockKlineSpider(scrapy.Spider):
                 
                 # 检查未来10天是否有5%以上涨幅
                 future_prices_10 = df.iloc[i+1:i+11]['close']
-                max_future_return = ((future_prices_10.max() - current_row['close']) / 
-                                   current_row['close'] * 100)
+                max_future_return = round(((future_prices_10.max() - current_row['close']) / 
+                                   current_row['close'] * 100), 2)
                 
                 success = max_future_return >= 5
                 
@@ -683,12 +694,12 @@ class StockKlineSpider(scrapy.Spider):
         # 计算总体统计
         total_success = sum(stats['success'] for stats in signal_stats.values())
         total_signals = sum(stats['total'] for stats in signal_stats.values())
-        overall_success_rate = (total_success / total_signals * 100) if total_signals > 0 else 0
+        overall_success_rate = round((total_success / total_signals * 100), 2) if total_signals > 0 else 0
         
         # 计算每种信号的成功率
         success_rates = {}
         for signal_type, stats in signal_stats.items():
-            success_rate = (stats['success'] / stats['total'] * 100) if stats['total'] > 0 else 0
+            success_rate = round((stats['success'] / stats['total'] * 100), 2) if stats['total'] > 0 else 0
             success_rates[signal_type] = {
                 'success_rate': success_rate,
                 'total_signals': stats['total'],

@@ -1,2 +1,4 @@
 
 *.pyc
+kdj_signals_*.txt
+stock_signals.db
