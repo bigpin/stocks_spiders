@@ -97,7 +97,15 @@ class SpidersDownloaderMiddleware:
         # - return None: continue processing this exception
         # - return a Response object: stops process_exception() chain
         # - return a Request object: stops process_exception() chain
-        pass
+        from twisted.internet.error import ConnectionDone
+        from twisted.conch.telnet import AlreadyNegotiating
+
+        if isinstance(exception, (ConnectionDone, AlreadyNegotiating)):
+            # 对于连接完成或协商错误，重新调度请求
+            spider.logger.info(f'重试请求 {request.url} 由于 {exception.__class__.__name__}')
+            return request
+
+        return None
 
     def spider_opened(self, spider):
         spider.logger.info("Spider opened: %s" % spider.name)

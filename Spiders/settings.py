@@ -96,7 +96,7 @@ TWISTED_REACTOR = "twisted.internet.asyncioreactor.AsyncioSelectorReactor"
 FEED_EXPORT_ENCODING = "utf-8"
 
 SPLASH_URL = 'http://localhost:8050'
-DUPEFILTER_CLASS = 'scrapy_splash.SplashAwareDupeFilter'
+DUPEFILTER_CLASS = 'Spiders.signal_filter.CustomFilter'
 HTTPCACHE_STORAGE = 'scrapy_splash.SplashAwareFSCacheStorage'
 
 # 设置CSV导出
@@ -107,3 +107,6 @@ FEED_EXPORTERS = {
 FEED_EXPORT_ENCODING = 'utf-8-sig'
 FEED_EXPORT_FIELDS = None  # 允许动态设置字段
 FEEDS = {}  # 允许在spider中覆盖设置
+
+LOG_ENABLED = True
+LOG_LEVEL = 'WARNING'

@@ -147,7 +147,7 @@ class StockKlineSpider(scrapy.Spider):
             count += 1
             #if count > 100: # 限制请求数量
             #    break
-            self.logger.info(f"开始请求第{count}个股票 {stock_code} 的数据")
+            self.logger.warning(f"开始请求第{count}个股票 {stock_code} 的数据")
             # 获取股票代码前缀对应的数字
             prefix = STOCK_PREFIX_MAP.get(stock_code[:2])
             if not prefix:
@@ -211,7 +211,7 @@ class StockKlineSpider(scrapy.Spider):
                                 try:
                                     date = datetime.strptime(date_str, "%Y%m%d").strftime("%Y-%m-%d")
                                 except ValueError:
-                                    self.logger.error(f"▲ 无法解析日期格式: {date_str}")
+                                    self.logger.error(f"无法解析日期格式: {date_str}")
                                     continue
                         else:
                             continue
@@ -420,9 +420,9 @@ class StockKlineSpider(scrapy.Spider):
                             self.write_to_signal_file("-" * 80)  # 分隔线
                             
                             # 同时保持控制台输出
-                            self.logger.info(f"股票 {stock_code} KDJ信号分析结果已写入文件: {self.signal_file}")
+                            self.logger.warning(f"股票 {stock_code} KDJ信号分析结果已写入文件: {self.signal_file}")
                         else:
-                            self.logger.info(f"股票 {stock_code} 最近5天的不同信号类型少于2，跳过输出")
+                            self.logger.warning(f"股票 {stock_code} 最近5天的信号类型数量 {len(signal_type_count)}，跳过输出")
                     else:
                         self.logger.info(f"股票 {stock_code} 最近5天没有满足条件的高胜信号")
                 
