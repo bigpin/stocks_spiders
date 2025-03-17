@@ -127,16 +127,31 @@ class StockKlineSpider(scrapy.Spider):
                 signal TEXT,
                 success_rate REAL,
                 initial_price REAL,
-                highest_price REAL,
-                highest_price_date TEXT,
-                highest_price_change_rate REAL,
-                highest_price_days INTEGER,  -- 最高价格距离创建时间的天数
-                lowest_price REAL,
-                lowest_price_date TEXT,
-                lowest_price_change_rate REAL,
-                lowest_price_days INTEGER,   -- 最低价格距离创建时间的天数
                 created_at TEXT,
                 UNIQUE(stock_code, date, signal)
+            )
+        ''')
+        
+        # 创建新的信号记录表
+        self.cursor.execute('''
+            CREATE TABLE IF NOT EXISTS stock_signals (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                stock_code TEXT,
+                stock_name TEXT,
+                signal TEXT,
+                signal_count INTEGER,
+                overall_success_rate REAL,
+                insert_date TEXT,
+                insert_price REAL,
+                highest_price REAL,
+                highest_price_date TEXT,
+                highest_change_rate REAL,
+                highest_days INTEGER,
+                lowest_price REAL,
+                lowest_price_date TEXT,
+                lowest_change_rate REAL,
+                lowest_days INTEGER,
+                created_at TEXT
             )
         ''')
         self.conn.commit()
@@ -271,7 +286,7 @@ class StockKlineSpider(scrapy.Spider):
             if data.get('data') and data['data'].get('klines'):
                 stock_code = response.meta['stock_code']
                 klines = data['data']['klines']
-                
+                                
                 # 检查数据量是否足够
                 if len(klines) < 16:
                     self.logger.warning(f"票 {stock_code} 的数据量不足16天，跳过分析")
@@ -298,6 +313,9 @@ class StockKlineSpider(scrapy.Spider):
                 df = pd.DataFrame(kline_data)
                 df.set_index('date', inplace=True)
                 
+                last_close_price = df.iloc[-1]['close']  # 最近的收盘价
+                self.logger.info(f"最近一天的日期: {df.iloc[-1].name}, 收盘价: {last_close_price}")
+
                 # 算技术指标
                 if self.calc_indicators:
                     df = TechnicalIndicators.calculate_all(df, INDICATORS_CONFIG)
@@ -314,7 +332,7 @@ class StockKlineSpider(scrapy.Spider):
                             signal_type_count[signal_type] = signal_type_count.get(signal_type, 0) + 1
                         
                         # 有当出现六种以上不同信号时才输出
-                        if len(signal_type_count) > 6:
+                        if len(signal_type_count) > 5:
                             # 写入文件
                             self.write_to_signal_file(f"\n股票 {data['data']['name']}({stock_code}) 股票信号分析结果")
                             self.write_to_signal_file(f"总体成功率: {kdj_analysis['overall_success_rate']:.2f}%")
@@ -351,6 +369,24 @@ class StockKlineSpider(scrapy.Spider):
                                     VALUES (?, ?, ?, ?, ?, ?, ?)
                                 ''', signals_to_insert)
                                 self.conn.commit()
+                                
+                            self.cursor.execute('''
+                                INSERT INTO stock_signals (
+                                    stock_code, stock_name, signal, signal_count,
+                                    overall_success_rate, insert_date, insert_price,
+                                    created_at
+                                )
+                                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                            ''', (
+                                stock_code,
+                                data['data']['name'],
+                                ','.join(signal_type_count.keys()),
+                                len(signal_type_count),
+                                round(kdj_analysis['overall_success_rate'], 2),
+                                self.current_time,
+                                round(last_close_price, 2),
+                                self.current_time
+                            ))
                             
                             # 输出信号到文件
                             for signal in kdj_analysis['recent_signals']:
@@ -460,9 +496,9 @@ class StockKlineSpider(scrapy.Spider):
         try:
             # 检查数据库中是否存在该股票的记录，只获取必要字段
             self.cursor.execute('''
-                SELECT id, initial_price, created_at
-                FROM stock_data 
-                WHERE stock_code=? AND date>=?
+                SELECT id, insert_price, insert_date
+                FROM stock_signals 
+                WHERE stock_code=? AND insert_date>=?
             ''', (stock_code, (datetime.now() - timedelta(days=14)).strftime("%Y-%m-%d")))
             
             records = self.cursor.fetchall()
@@ -470,16 +506,16 @@ class StockKlineSpider(scrapy.Spider):
                 if not df.empty:
                     # 遍历所有记录，统计14天内的最高和最低价格
                     for record in records:
-                        record_id, initial_price, created_at = record
+                        record_id, insert_price, insert_date = record
                         
-                        # 如果initial_price为None，跳过这条记录
-                        if initial_price is None:
-                            self.logger.warning(f"记录ID {record_id} 的initial_price为None，跳过更新")
+                        # 如果insert_price为None，跳过这条记录
+                        if insert_price is None:
+                            self.logger.warning(f"记录ID {record_id} 的insert_price为None，跳过更新")
                             continue
                             
                         try:
-                            # 将created_at转换为日期格式（去掉时分秒）
-                            created_date = datetime.strptime(created_at, "%Y-%m-%d %H:%M:%S").strftime("%Y-%m-%d")
+                            # 将insert_date转换为日期格式（去掉时分秒）
+                            insert_date = datetime.strptime(insert_date, "%Y-%m-%d %H:%M:%S").strftime("%Y-%m-%d")
                             
                             # 确保DataFrame的索引是datetime类型
                             if not isinstance(df.index, pd.DatetimeIndex):
@@ -487,8 +523,8 @@ class StockKlineSpider(scrapy.Spider):
                             
                             try:
                                 # 找到最接近的交易日
-                                created_date = pd.to_datetime(created_date)
-                                nearest_date = df.index[df.index >= created_date][0]
+                                insert_date = pd.to_datetime(insert_date)
+                                nearest_date = df.index[df.index >= insert_date][0]
                                 created_idx = df.index.get_loc(nearest_date)
                                 
                                 # 获取从nearest_date当天到后续14天的数据（包含当天）
@@ -502,26 +538,26 @@ class StockKlineSpider(scrapy.Spider):
                                         # 计算最高价格
                                         highest_price = round(future_data['close'].max(), 2)
                                         highest_price_date = future_data['close'].idxmax().strftime("%Y-%m-%d")
-                                        highest_change_rate = round(((highest_price - initial_price) / initial_price * 100), 2)
-                                        highest_days = (pd.to_datetime(highest_price_date) - created_date).days
+                                        highest_change_rate = round(((highest_price - insert_price) / insert_price * 100), 2)
+                                        highest_days = (pd.to_datetime(highest_price_date) - insert_date).days
                                         
                                         # 计算最低价格
                                         lowest_price = round(future_data['close'].min(), 2)
                                         lowest_price_date = future_data['close'].idxmin().strftime("%Y-%m-%d")
-                                        lowest_change_rate = round(((lowest_price - initial_price) / initial_price * 100), 2)
-                                        lowest_days = (pd.to_datetime(lowest_price_date) - created_date).days
+                                        lowest_change_rate = round(((lowest_price - insert_price) / insert_price * 100), 2)
+                                        lowest_days = (pd.to_datetime(lowest_price_date) - insert_date).days
                                         
-                                        # 总是更新14天内的最高和最低价格
+                                        # 更新stock_signals表中的最高和最低价格
                                         self.cursor.execute('''
-                                            UPDATE stock_data
+                                            UPDATE stock_signals
                                             SET highest_price=?, 
                                                 highest_price_date=?,
-                                                highest_price_change_rate=?,
-                                                highest_price_days=?,
+                                                highest_change_rate=?,
+                                                highest_days=?,
                                                 lowest_price=?,
                                                 lowest_price_date=?,
-                                                lowest_price_change_rate=?,
-                                                lowest_price_days=?
+                                                lowest_change_rate=?,
+                                                lowest_days=?
                                             WHERE id=?
                                         ''', (highest_price, highest_price_date, highest_change_rate, highest_days,
                                              lowest_price, lowest_price_date, lowest_change_rate, lowest_days,
@@ -529,9 +565,9 @@ class StockKlineSpider(scrapy.Spider):
                             except IndexError:
                                 self.logger.warning(f"记录ID {record_id} 没有找到对应的交易日数据")
                             except Exception as e:
-                                self.logger.error(f"处理日期时出错: {created_at}, 错误: {str(e)}")
+                                self.logger.error(f"处理日期时出错: {insert_date}, 错误: {str(e)}")
                         except (KeyError, ValueError) as e:
-                            self.logger.error(f"处理日期时出错: {created_at}, 错误: {str(e)}")
+                            self.logger.error(f"处理日期时出错: {insert_date}, 错误: {str(e)}")
                             continue
                 
                 self.conn.commit()
@@ -660,9 +696,9 @@ class StockKlineSpider(scrapy.Spider):
             for signal, signal_type in signals_for_day:
                 signal_stats[signal_type]['total'] += 1
                 
-                # 检查未来10天是否有5%以上涨幅
-                future_prices_10 = df.iloc[i+1:i+11]['close']
-                max_future_return = round(((future_prices_10.max() - current_row['close']) / 
+                # 检查未来14天是否有5%以上涨幅
+                future_prices_14 = df.iloc[i+1:i+15]['close']
+                max_future_return = round(((future_prices_14.max() - current_row['close']) / 
                                    current_row['close'] * 100), 2)
                 
                 success = max_future_return >= 5
@@ -671,7 +707,7 @@ class StockKlineSpider(scrapy.Spider):
                     signal_stats[signal_type]['success'] += 1
                     
                 signals.append({
-                    'date': df.index[i],
+                    'date': pd.to_datetime(df.index, format='%Y-%m-%d'),  # 修改日期格式
                     'signal_type': signal_type,
                     'signal': signal,
                     'close': current_row['close'],
@@ -751,14 +787,14 @@ class StockKlineSpider(scrapy.Spider):
                 if (current_row['close'] < df.iloc[-3:].iloc[:i+1]['close'].min() and 
                     current_row['MACD_12_26_9'] > df.iloc[-3:].iloc[:i+1]['MACD_12_26_9'].min()):
                     signals_for_day.append(('MACD底背离', 'macd_divergence'))
-                    
+                
                 # RSI信号判断
                 if current_row['RSI_6'] < 20:
                     signals_for_day.append(('RSI超卖', 'rsi_oversold'))
                 if (prev_row['RSI_6'] < prev_row['RSI_12'] and 
                     current_row['RSI_6'] > current_row['RSI_12']):
                     signals_for_day.append(('RSI金叉', 'rsi_golden_cross'))
-                    
+                
                 # BOLL信号判断
                 if (current_row['close'] <= current_row['BBL_20_2.0'] * 1.01):
                     signals_for_day.append(('BOLL下轨支撑', 'boll_bottom_touch'))
