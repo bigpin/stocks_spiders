@@ -2,6 +2,7 @@ from scrapy.crawler import CrawlerProcess
 from scrapy.utils.project import get_project_settings
 from spiders.get_stock_list import StockListSpider
 from scrapy import cmdline
+from datetime import datetime, timedelta
 
 def run_stock_list_spider():
     """获取股票列表"""
@@ -16,6 +17,11 @@ def run_stock_detail_spider(stock_codes='sh603288,sz000858'):
 def run_stock_kline_spider_with_indicators(stock_codes):
     """获取带技术指标的K线数据"""
     cmdline.execute(f'scrapy crawl stock_kline -a use_file=true -a stock_codes={stock_codes} -a calc_indicators=true'.split())
+
+def run_stock_kline_spider_with_yesterday(stock_codes):
+    """获取昨天的K线数据"""
+    yesterday = (datetime.now() - timedelta(days=1)).strftime('%Y%m%d')
+    cmdline.execute(f'scrapy crawl stock_kline -a use_file=true -a stock_codes={stock_codes} -a start_date={yesterday} -a end_date={yesterday} -a calc_indicators=true'.split())
 
 def run_stock_kline_spider_without_indicators(stock_codes='sh603288'):
     """获取不带技术指标的K线数据"""
@@ -55,6 +61,6 @@ if __name__ == "__main__":
     
     # 运行获取带技术指标K线数据的爬虫
     run_stock_kline_spider_with_indicators(STOCK_CODES)
-    
+    # run_stock_kline_spider_with_yesterday(STOCK_CODES)
     # 运行获取不带技术指标K线数据的爬虫
     # run_stock_kline_spider_without_indicators()

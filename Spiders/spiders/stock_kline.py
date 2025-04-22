@@ -67,8 +67,9 @@ class StockKlineSpider(scrapy.Spider):
                  calc_indicators=True, *args, **kwargs):
         super(StockKlineSpider, self).__init__(*args, **kwargs)
         
-        # 获取脚本运行时的时间
-        self.current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        # 获取指定日期或当前日期
+        self.current_date = datetime.strptime(end_date, "%Y%m%d") if end_date else datetime.now()
+        self.current_time = self.current_date.strftime("%Y-%m-%d")
         
         # 从文件读取股票代码或使用传入的股票代码
         if use_file and use_file.lower() == 'true':
@@ -88,27 +89,21 @@ class StockKlineSpider(scrapy.Spider):
         self.fq_type = fq_type
         
         # 设置默认时间范围为最近一年
-        current_date = datetime.now()
-        one_year_ago = current_date - timedelta(days=365)
+        one_year_ago = self.current_date - timedelta(days=365)
         
-        if not start_date:
-            self.start_date = one_year_ago.strftime("%Y%m%d")  # 一年前的日期
-        else:
-            self.start_date = start_date
-            
-        if not end_date:
-            self.end_date = current_date.strftime("%Y%m%d")    # 当前日期
-        else:
-            self.end_date = end_date
+        # 设置起始日期
+        self.start_date = one_year_ago.strftime("%Y%m%d")
+        # 设置结束日期
+        self.end_date = end_date if end_date else self.current_date.strftime("%Y%m%d")
             
         self.calc_indicators = calc_indicators
         self.kline_data = {}  # 用于临时存储K线数据
         
         # 添加信号输出文件的路径
-        self.signal_file = f'kdj_signals_{datetime.now().strftime("%Y%m%d")}.txt'
+        self.signal_file = f'kdj_signals_{self.current_date.strftime("%Y%m%d")}.txt'
         # 清空信号文件
         with open(self.signal_file, 'w', encoding='utf-8') as f:
-            f.write(f"股票信号分析报告 - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+            f.write(f"股票信号分析报告 - {self.current_time}\n")
             f.write("=" * 80 + "\n\n")
         
         # 初始化数据库连接
@@ -396,7 +391,7 @@ class StockKlineSpider(scrapy.Spider):
                                     
                                     # 基础信息
                                     signal_info.extend([
-                                        f"日期: {signal['date']}",
+                                        f"日期: {signal['date'].strftime('%Y-%m-%d')}",
                                         f"信号类型: {signal['signal_type']}",
                                         f"信号: {signal['signal']}",
                                         f"信号胜率: {signal['signal_success_rate']:.2f}%",
