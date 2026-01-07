@@ -13,6 +13,9 @@ kdj_signals_*.txt
 
 *.csv
 !Spiders/web/requirements.txt
+*_data.csv
+kline_data.csv
+stock_kline_data.csv
 
 .conda
 venv/
