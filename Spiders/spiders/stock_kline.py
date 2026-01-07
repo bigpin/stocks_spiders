@@ -127,7 +127,6 @@ class StockKlineSpider(scrapy.Spider):
             )
         ''')
         
-        # 创建新的信号记录表
         self.cursor.execute('''
             CREATE TABLE IF NOT EXISTS stock_signals (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -146,9 +145,19 @@ class StockKlineSpider(scrapy.Spider):
                 lowest_price_date TEXT,
                 lowest_change_rate REAL,
                 lowest_days INTEGER,
+                buy_day_change_rate REAL,
+                next_day_change_rate REAL,
                 created_at TEXT
             )
         ''')
+        try:
+            self.cursor.execute('ALTER TABLE stock_signals ADD COLUMN buy_day_change_rate REAL')
+        except:
+            pass
+        try:
+            self.cursor.execute('ALTER TABLE stock_signals ADD COLUMN next_day_change_rate REAL')
+        except:
+            pass
         self.conn.commit()
     
     def start_requests(self):
@@ -479,27 +488,32 @@ class StockKlineSpider(scrapy.Spider):
             self.write_to_signal_file(f"\n错误: {error_msg}")
             import traceback
             self.write_to_signal_file(traceback.format_exc())
+            return  # 出现异常时直接返回，不继续执行
         
-        # 获取股票名称
-        stock_name = data['data']['name'] if 'data' in data and 'name' in data['data'] else '未知'
+        # 获取股票名称（确保data变量已定义且不为None）
+        try:
+            stock_name = data.get('data', {}).get('name', '未知')
+        except Exception as e:
+            self.logger.error(f"获取股票名称时出错: {str(e)}")
+            stock_name = '未知'
         
         # 更新数据库中的最高价格
         self.update_price_extremes(stock_code, stock_name, df)
     
     def update_price_extremes(self, stock_code, stock_name, df):
-        """更新数据库中记录的股票在日志记录时间14天内的最高和最低价格"""
+        """更新数据库中记录的股票在日志记录时间30天内的最高和最低价格"""
         try:
             # 检查数据库中是否存在该股票的记录，只获取必要字段
             self.cursor.execute('''
                 SELECT id, insert_price, insert_date
                 FROM stock_signals 
                 WHERE stock_code=? AND insert_date>=?
-            ''', (stock_code, (datetime.now() - timedelta(days=14)).strftime("%Y-%m-%d")))
+            ''', (stock_code, (datetime.now() - timedelta(days=30)).strftime("%Y-%m-%d")))
             
             records = self.cursor.fetchall()
             if records:
                 if not df.empty:
-                    # 遍历所有记录，统计14天内的最高和最低价格
+                    # 遍历所有记录，统计30天内的最高和最低价格
                     for record in records:
                         record_id, insert_price, insert_date = record
                         
@@ -509,8 +523,13 @@ class StockKlineSpider(scrapy.Spider):
                             continue
                             
                         try:
-                            # 将insert_date转换为日期格式（去掉时分秒）
-                            insert_date = datetime.strptime(insert_date, "%Y-%m-%d %H:%M:%S").strftime("%Y-%m-%d")
+                            # 将insert_date转换为日期格式
+                            try:
+                                # 先尝试转换完整的日期时间格式
+                                insert_date = datetime.strptime(insert_date, "%Y-%m-%d %H:%M:%S").strftime("%Y-%m-%d")
+                            except ValueError:
+                                # 如果失败，尝试只转换日期部分
+                                insert_date = datetime.strptime(insert_date, "%Y-%m-%d").strftime("%Y-%m-%d")
                             
                             # 确保DataFrame的索引是datetime类型
                             if not isinstance(df.index, pd.DatetimeIndex):
@@ -522,27 +541,36 @@ class StockKlineSpider(scrapy.Spider):
                                 nearest_date = df.index[df.index >= insert_date][0]
                                 created_idx = df.index.get_loc(nearest_date)
                                 
-                                # 获取从nearest_date当天到后续14天的数据（包含当天）
-                                future_data = df.iloc[created_idx:created_idx + 15]  # 包含当天，所以不需要+1
+                                # 获取从nearest_date当天到后续30天的数据（包含当天）
+                                future_data = df.iloc[created_idx:created_idx + 31]  # 包含当天，所以不需要+1
                                 
                                 if not future_data.empty:
                                     # 确保close列中没有None值
                                     future_data = future_data[future_data['close'].notna()]
                                     
                                     if not future_data.empty:
-                                        # 计算最高价格
+                                        buy_day_change_rate = None
+                                        next_day_change_rate = None
+                                        
+                                        buy_day_data = future_data.iloc[0:1]
+                                        if not buy_day_data.empty and 'change_rate' in buy_day_data.columns:
+                                            buy_day_change_rate = round(buy_day_data['change_rate'].iloc[0], 2) if pd.notna(buy_day_data['change_rate'].iloc[0]) else None
+                                        
+                                        if len(future_data) > 1:
+                                            next_day_data = future_data.iloc[1:2]
+                                            if not next_day_data.empty and 'change_rate' in next_day_data.columns:
+                                                next_day_change_rate = round(next_day_data['change_rate'].iloc[0], 2) if pd.notna(next_day_data['change_rate'].iloc[0]) else None
+                                        
                                         highest_price = round(future_data['close'].max(), 2)
                                         highest_price_date = future_data['close'].idxmax().strftime("%Y-%m-%d")
                                         highest_change_rate = round(((highest_price - insert_price) / insert_price * 100), 2)
                                         highest_days = (pd.to_datetime(highest_price_date) - insert_date).days
                                         
-                                        # 计算最低价格
                                         lowest_price = round(future_data['close'].min(), 2)
                                         lowest_price_date = future_data['close'].idxmin().strftime("%Y-%m-%d")
                                         lowest_change_rate = round(((lowest_price - insert_price) / insert_price * 100), 2)
                                         lowest_days = (pd.to_datetime(lowest_price_date) - insert_date).days
                                         
-                                        # 更新stock_signals表中的最高和最低价格
                                         self.cursor.execute('''
                                             UPDATE stock_signals
                                             SET highest_price=?, 
@@ -552,11 +580,13 @@ class StockKlineSpider(scrapy.Spider):
                                                 lowest_price=?,
                                                 lowest_price_date=?,
                                                 lowest_change_rate=?,
-                                                lowest_days=?
+                                                lowest_days=?,
+                                                buy_day_change_rate=?,
+                                                next_day_change_rate=?
                                             WHERE id=?
                                         ''', (highest_price, highest_price_date, highest_change_rate, highest_days,
                                              lowest_price, lowest_price_date, lowest_change_rate, lowest_days,
-                                             record_id))
+                                             buy_day_change_rate, next_day_change_rate, record_id))
                             except IndexError:
                                 self.logger.warning(f"记录ID {record_id} 没有找到对应的交易日数据")
                             except Exception as e:
@@ -748,6 +778,17 @@ class StockKlineSpider(scrapy.Spider):
             trading_days = df[df.index.dayofweek < 5].index  # 0-4分别代表周一到周五
             last_3_trading_days = trading_days[-3:]
             last_3_days = df.loc[last_3_trading_days].copy()
+            
+            # 最后一个交易日是否为today
+            if self.current_time != last_3_trading_days[-1].strftime('%Y-%m-%d'):
+                return {
+                    'signal_stats': 0,
+                    'overall_success_rate': 0,
+                    'total_signals': 0,
+                    'total_success': 0,
+                    'signals': [],
+                    'recent_signals': []
+                }
             
             for i in range(len(last_3_days)):
                 current_row = last_3_days.iloc[i]

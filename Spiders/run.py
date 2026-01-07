@@ -18,11 +18,23 @@ def run_stock_kline_spider_with_indicators(stock_codes):
     """获取带技术指标的K线数据"""
     cmdline.execute(f'scrapy crawl stock_kline -a use_file=true -a stock_codes={stock_codes} -a calc_indicators=true'.split())
 
+# def run_stock_kline_spider_with_yesterday(stock_codes):
+#     """获取昨天的K线数据"""
+#     yesterday = (datetime.now() - timedelta(days=1)).strftime('%Y%m%d')
+#     cmdline.execute(f'scrapy crawl stock_kline -a use_file=true -a stock_codes={stock_codes} -a start_date={yesterday} -a end_date={yesterday} -a calc_indicators=true'.split())
+
 def run_stock_kline_spider_with_yesterday(stock_codes):
     """获取昨天的K线数据"""
     yesterday = (datetime.now() - timedelta(days=1)).strftime('%Y%m%d')
-    cmdline.execute(f'scrapy crawl stock_kline -a use_file=true -a stock_codes={stock_codes} -a start_date={yesterday} -a end_date={yesterday} -a calc_indicators=true'.split())
-
+    process = CrawlerProcess(get_project_settings())
+    process.crawl('stock_kline', 
+                 use_file='true',
+                 stock_codes=stock_codes,
+                 start_date=yesterday,
+                 end_date=yesterday,
+                 calc_indicators='true')
+    process.start()
+    
 def run_stock_kline_spider_without_indicators(stock_codes='sh603288'):
     """获取不带技术指标的K线数据"""
     cmdline.execute(f'scrapy crawl stock_kline -a stock_codes={stock_codes} -a calc_indicators=false'.split())
@@ -60,7 +72,7 @@ if __name__ == "__main__":
     # run_stock_detail_spider()
     
     # 运行获取带技术指标K线数据的爬虫
-    run_stock_kline_spider_with_indicators(STOCK_CODES)
-    # run_stock_kline_spider_with_yesterday(STOCK_CODES)
+    # run_stock_kline_spider_with_indicators(STOCK_CODES)
+    run_stock_kline_spider_with_yesterday(STOCK_CODES)
     # 运行获取不带技术指标K线数据的爬虫
     # run_stock_kline_spider_without_indicators()

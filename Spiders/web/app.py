@@ -1,0 +1,224 @@
+from flask import Flask, render_template, request, jsonify
+import sqlite3
+import os
+from datetime import datetime
+
+app = Flask(__name__)
+
+DB_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), 'stock_signals.db')
+
+def migrate_database():
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    try:
+        cursor.execute('ALTER TABLE stock_signals ADD COLUMN buy_day_change_rate REAL')
+    except sqlite3.OperationalError:
+        pass
+    try:
+        cursor.execute('ALTER TABLE stock_signals ADD COLUMN next_day_change_rate REAL')
+    except sqlite3.OperationalError:
+        pass
+    conn.commit()
+    conn.close()
+
+def get_db_connection():
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    return conn
+
+@app.route('/')
+def index():
+    return render_template('calendar.html')
+
+@app.route('/list')
+def list_view():
+    return render_template('index.html')
+
+@app.route('/api/signals')
+def get_signals():
+    conn = get_db_connection()
+    
+    stock_code = request.args.get('stock_code', '')
+    stock_name = request.args.get('stock_name', '')
+    signal_type = request.args.get('signal_type', '')
+    min_success_rate = request.args.get('min_success_rate', '')
+    min_signal_count = request.args.get('min_signal_count', '')
+    date_from = request.args.get('date_from', '')
+    date_to = request.args.get('date_to', '')
+    sort_by = request.args.get('sort_by', 'created_at')
+    order = request.args.get('order', 'desc')
+    page = int(request.args.get('page', 1))
+    per_page = int(request.args.get('per_page', 20))
+    
+    query = "SELECT * FROM stock_signals WHERE 1=1"
+    params = []
+    
+    if stock_code:
+        query += " AND stock_code LIKE ?"
+        params.append(f"%{stock_code}%")
+    
+    if stock_name:
+        query += " AND stock_name LIKE ?"
+        params.append(f"%{stock_name}%")
+    
+    if signal_type:
+        query += " AND signal LIKE ?"
+        params.append(f"%{signal_type}%")
+    
+    if min_success_rate:
+        query += " AND overall_success_rate >= ?"
+        params.append(float(min_success_rate))
+    
+    if min_signal_count:
+        query += " AND signal_count >= ?"
+        params.append(int(min_signal_count))
+    
+    if date_from:
+        query += " AND insert_date >= ?"
+        params.append(date_from)
+    
+    if date_to:
+        query += " AND insert_date <= ?"
+        params.append(date_to)
+    
+    valid_sort_columns = ['created_at', 'overall_success_rate', 'signal_count', 'insert_date', 'highest_change_rate']
+    if sort_by not in valid_sort_columns:
+        sort_by = 'created_at'
+    
+    valid_orders = ['asc', 'desc']
+    if order not in valid_orders:
+        order = 'desc'
+    
+    query += f" ORDER BY {sort_by} {order.upper()}"
+    
+    cursor = conn.cursor()
+    cursor.execute(query, params)
+    total = len(cursor.fetchall())
+    
+    query += " LIMIT ? OFFSET ?"
+    params.extend([per_page, (page - 1) * per_page])
+    
+    cursor.execute(query, params)
+    rows = cursor.fetchall()
+    
+    signals = []
+    for row in rows:
+        signal = dict(row)
+        signals.append(signal)
+    
+    conn.close()
+    
+    return jsonify({
+        'signals': signals,
+        'total': total,
+        'page': page,
+        'per_page': per_page,
+        'total_pages': (total + per_page - 1) // per_page
+    })
+
+@app.route('/api/stats')
+def get_stats():
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    cursor.execute("SELECT COUNT(*) as total FROM stock_signals")
+    total_signals = cursor.fetchone()['total']
+    
+    cursor.execute("SELECT AVG(overall_success_rate) as avg_rate FROM stock_signals")
+    avg_rate = cursor.fetchone()['avg_rate'] or 0
+    
+    cursor.execute("SELECT COUNT(DISTINCT stock_code) as total_stocks FROM stock_signals")
+    total_stocks = cursor.fetchone()['total_stocks']
+    
+    cursor.execute("SELECT AVG(highest_change_rate) as avg_highest FROM stock_signals WHERE highest_change_rate IS NOT NULL")
+    avg_highest = cursor.fetchone()['avg_highest'] or 0
+    
+    conn.close()
+    
+    return jsonify({
+        'total_signals': total_signals,
+        'avg_success_rate': round(avg_rate, 2),
+        'total_stocks': total_stocks,
+        'avg_highest_change': round(avg_highest, 2)
+    })
+
+@app.route('/api/calendar/events')
+def get_calendar_events():
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    stock_code = request.args.get('stock_code', '')
+    date_from = request.args.get('date_from', '')
+    date_to = request.args.get('date_to', '')
+    query = """
+        SELECT stock_code, stock_name, insert_date, insert_price,
+               highest_price, highest_price_date, highest_change_rate, highest_days,
+               lowest_price, lowest_price_date, lowest_change_rate, lowest_days,
+               buy_day_change_rate, next_day_change_rate
+        FROM stock_signals
+        WHERE 1=1
+    """
+    params = []
+    if stock_code:
+        query += " AND stock_code LIKE ?"
+        params.append(f"%{stock_code}%")
+    if date_from:
+        query += " AND date(insert_date) >= date(?)"
+        params.append(date_from)
+    if date_to:
+        query += " AND date(insert_date) <= date(?)"
+        params.append(date_to)
+    query += " ORDER BY insert_date DESC"
+    cursor.execute(query, params)
+    rows = cursor.fetchall()
+    events = []
+    for row in rows:
+        insert_date = row[2]
+        insert_price = row[3]
+        highest_price = row[4]
+        highest_price_date = row[5]
+        highest_change_rate = row[6]
+        highest_days = row[7]
+        lowest_price = row[8]
+        lowest_price_date = row[9]
+        lowest_change_rate = row[10]
+        lowest_days = row[11]
+        buy_day_change_rate = row[12] if len(row) > 12 else None
+        next_day_change_rate = row[13] if len(row) > 13 else None
+        events.append({
+            'stock_code': row[0],
+            'stock_name': row[1],
+            'insert_date': insert_date,
+            'insert_price': insert_price,
+            'highest_price': highest_price,
+            'highest_price_date': highest_price_date,
+            'highest_change_rate': highest_change_rate,
+            'highest_days': highest_days,
+            'lowest_price': lowest_price,
+            'lowest_price_date': lowest_price_date,
+            'lowest_change_rate': lowest_change_rate,
+            'lowest_days': lowest_days,
+            'buy_day_change_rate': buy_day_change_rate,
+            'next_day_change_rate': next_day_change_rate
+        })
+    conn.close()
+    return jsonify({'events': events})
+
+@app.route('/api/stock-codes')
+def get_stock_codes():
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT DISTINCT stock_code, stock_name FROM stock_signals ORDER BY stock_code")
+    rows = cursor.fetchall()
+    stock_codes = []
+    for row in rows:
+        stock_codes.append({
+            'code': row[0],
+            'name': row[1] if row[1] else ''
+        })
+    conn.close()
+    return jsonify({'stock_codes': stock_codes})
+
+if __name__ == '__main__':
+    migrate_database()
+    app.run(debug=True, host='0.0.0.0', port=5001)
+
