@@ -1,0 +1,18 @@
+# Scrapy 相关
+scrapy>=2.8.0
+scrapy-splash>=0.11.1
+itemadapter>=0.7.0
+
+# 数据处理
+pandas>=2.0.0
+numpy>=1.24.0
+
+# 技术指标计算
+ta>=0.11.0
+
+# Web 应用
+Flask>=3.0.0
+
+# 其他工具
+backports.tarfile>=0.1.0
+
