@@ -6,8 +6,10 @@ from datetime import datetime, timedelta
 
 def run_stock_list_spider():
     """获取股票列表"""
-    process = CrawlerProcess(get_project_settings())
-    process.crawl(StockListSpider, api_key='8371893ed4ab2b2f75b59c7fa26bf2fe')  # 替换为您的API key
+    settings = get_project_settings()
+    settings.set('REQUEST_FINGERPRINTER_IMPLEMENTATION', '2.7')
+    process = CrawlerProcess(settings)
+    process.crawl(StockListSpider, api_key='8371893ed4ab2b2f75b59c7fa26bf2fe')
     process.start()
 
 def run_stock_detail_spider(stock_codes='sh603288,sz000858'):
@@ -26,7 +28,9 @@ def run_stock_kline_spider_with_indicators(stock_codes):
 def run_stock_kline_spider_with_yesterday(stock_codes):
     """获取昨天的K线数据"""
     yesterday = (datetime.now() - timedelta(days=1)).strftime('%Y%m%d')
-    process = CrawlerProcess(get_project_settings())
+    settings = get_project_settings()
+    settings.set('REQUEST_FINGERPRINTER_IMPLEMENTATION', '2.7')
+    process = CrawlerProcess(settings)
     process.crawl('stock_kline', 
                  use_file='true',
                  stock_codes=stock_codes,
@@ -41,7 +45,7 @@ def run_stock_kline_spider_without_indicators(stock_codes='sh603288'):
 
 # 股票代码列表
 STOCK_CODES = (
-    'sh600463'
+    'sz001280'
     # 'sh688426,sh688217,sh605378,sh605277,sh605196,sh605155,sh605151,sh603990,'
     # 'sh603768,sh603725,sh603633,sh603363,sh603316,sh603307,sh603286,sh603193,'
     # 'sh603172,sh603163,sh603125,sh603121,sh603097,sh603081,sh603048,sh603045,'

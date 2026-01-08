@@ -6,9 +6,13 @@ class CustomFilter(RFPDupeFilter):
     def from_crawler(cls, crawler):
         return cls(crawler)
 
-    def __init__(self, crawler):
-        super().__init__()
-        self.crawler = crawler
+    def __init__(self, crawler=None):
+        if crawler:
+            fingerprinter = crawler.request_fingerprinter
+            super().__init__(fingerprinter=fingerprinter)
+            self.crawler = crawler
+        else:
+            super().__init__()
 
     def request_fingerprint(self, request):
         """Generate a fingerprint for a given request.
