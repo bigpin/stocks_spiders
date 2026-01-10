@@ -1179,7 +1179,6 @@ async function loadDataList(page = 1) {
         data.signals.forEach(signal => {
             const row = document.createElement('tr');
             const signals = signal.signal ? signal.signal.split(',') : [];
-            const signalTags = signals.map(s => `<span class="signal-tag">${s.trim()}</span>`).join('');
             
             const successRate = signal.overall_success_rate || 0;
             let rateClass = 'low';
@@ -1194,8 +1193,7 @@ async function loadDataList(page = 1) {
             row.innerHTML = `
                 <td>${signal.stock_code || '-'}</td>
                 <td>${signal.stock_name || '-'}</td>
-                <td><div class="signal-tags" data-signals="${signal.signal || ''}">${signalTags || '-'}</div></td>
-                <td>${signal.signal_count || 0}</td>
+                <td class="signal-count-cell" data-signals="${signal.signal || ''}">${signal.signal_count || 0}</td>
                 <td><span class="success-rate ${rateClass}">${successRate.toFixed(2)}%</span></td>
                 <td>${signal.insert_date ? signal.insert_date.split(' ')[0] : '-'}</td>
                 <td>${signal.insert_price ? signal.insert_price.toFixed(2) : '-'}</td>
@@ -1209,35 +1207,23 @@ async function loadDataList(page = 1) {
                 <td>${nextDayChange !== null ? `<span class="change-rate ${nextDayChange >= 0 ? 'positive' : 'negative'}">${nextDayChange >= 0 ? '+' : ''}${nextDayChange.toFixed(2)}%</span>` : '-'}</td>
             `;
             
-            // 为信号列添加tooltip
-            const signalTagsDiv = row.querySelector('.signal-tags');
-            if (signalTagsDiv && signals.length > 0) {
-                // 检查是否有溢出
-                const checkOverflow = () => {
-                    if (signalTagsDiv.scrollWidth > signalTagsDiv.clientWidth) {
-                        signalTagsDiv.classList.add('has-overflow');
-                    } else {
-                        signalTagsDiv.classList.remove('has-overflow');
-                    }
-                };
-                
-                // 延迟检查，确保DOM已渲染
-                setTimeout(checkOverflow, 0);
+            // 为信号数列添加tooltip
+            const signalCountCell = row.querySelector('.signal-count-cell');
+            if (signalCountCell && signals.length > 0) {
+                signalCountCell.style.cursor = 'help';
                 
                 // 添加鼠标事件
-                signalTagsDiv.addEventListener('mouseenter', function(e) {
-                    if (signals.length > 0) {
-                        const allSignals = signals.map(s => s.trim());
-                        const html = `<div style="font-weight: 600; margin-bottom: 8px; color: #fff;">信号列表 (${signals.length}个)</div><div style="display: flex; flex-wrap: wrap; gap: 6px; max-width: 400px;">${allSignals.map(s => `<span style="background: rgba(255,255,255,0.2); padding: 4px 8px; border-radius: 4px; font-size: 12px; white-space: nowrap;">${s}</span>`).join('')}</div>`;
-                        showTooltip(html, e.clientX, e.clientY);
-                    }
+                signalCountCell.addEventListener('mouseenter', function(e) {
+                    const allSignals = signals.map(s => s.trim());
+                    const html = `<div style="font-weight: 600; margin-bottom: 8px; color: #fff;">信号列表 (${signals.length}个)</div><div style="display: flex; flex-wrap: wrap; gap: 6px; max-width: 400px;">${allSignals.map(s => `<span style="background: rgba(255,255,255,0.2); padding: 4px 8px; border-radius: 4px; font-size: 12px; white-space: nowrap;">${s}</span>`).join('')}</div>`;
+                    showTooltip(html, e.clientX, e.clientY);
                 });
                 
-                signalTagsDiv.addEventListener('mouseleave', function() {
+                signalCountCell.addEventListener('mouseleave', function() {
                     hideTooltip();
                 });
                 
-                signalTagsDiv.addEventListener('mousemove', function(e) {
+                signalCountCell.addEventListener('mousemove', function(e) {
                     if (tooltipEl && tooltipEl.style.display === 'block') {
                         tooltipEl.style.left = e.clientX + 12 + "px";
                         tooltipEl.style.top = e.clientY + 12 + "px";
