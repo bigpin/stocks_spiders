@@ -89,12 +89,14 @@ def get_signals():
     if order not in valid_orders:
         order = 'desc'
     
-    query += f" ORDER BY {sort_by} {order.upper()}"
-    
+    # 先计算总数（使用COUNT，不需要ORDER BY）
+    count_query = query.replace("SELECT *", "SELECT COUNT(*)")
     cursor = conn.cursor()
-    cursor.execute(query, params)
-    total = len(cursor.fetchall())
+    cursor.execute(count_query, params)
+    total = cursor.fetchone()[0]
     
+    # 然后执行分页查询
+    query += f" ORDER BY {sort_by} {order.upper()}"
     query += " LIMIT ? OFFSET ?"
     params.extend([per_page, (page - 1) * per_page])
     
@@ -217,6 +219,43 @@ def get_stock_codes():
         })
     conn.close()
     return jsonify({'stock_codes': stock_codes})
+
+@app.route('/api/filter-options')
+def get_filter_options():
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    # 获取所有唯一的股票代码和名称
+    cursor.execute("SELECT DISTINCT stock_code, stock_name FROM stock_signals WHERE stock_code IS NOT NULL AND stock_code != '' ORDER BY stock_code")
+    stock_rows = cursor.fetchall()
+    stock_codes = []
+    for row in stock_rows:
+        stock_codes.append({
+            'code': row[0],
+            'name': row[1] if row[1] else ''
+        })
+    
+    # 获取所有唯一的股票名称
+    cursor.execute("SELECT DISTINCT stock_name FROM stock_signals WHERE stock_name IS NOT NULL AND stock_name != '' ORDER BY stock_name")
+    stock_names = [row[0] for row in cursor.fetchall()]
+    
+    # 获取所有唯一的信号类型（从signal字段中提取）
+    cursor.execute("SELECT DISTINCT signal FROM stock_signals WHERE signal IS NOT NULL AND signal != ''")
+    signal_rows = cursor.fetchall()
+    signal_types = set()
+    for row in signal_rows:
+        if row[0]:
+            # 信号可能是逗号分隔的多个信号
+            signals = [s.strip() for s in row[0].split(',') if s.strip()]
+            signal_types.update(signals)
+    signal_types = sorted(list(signal_types))
+    
+    conn.close()
+    return jsonify({
+        'stock_codes': stock_codes,
+        'stock_names': stock_names,
+        'signal_types': signal_types
+    })
 
 if __name__ == '__main__':
     migrate_database()
