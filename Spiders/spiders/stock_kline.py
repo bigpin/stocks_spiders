@@ -364,7 +364,7 @@ class StockKlineSpider(scrapy.Spider):
                                 ))
 
                             if signals_to_insert:
-                                # 使用executemany一次性插入多条记录
+                                # 使用executemany一次性插入多条记录（带唯一约束与 OR IGNORE，重复不会插入）
                                 self.cursor.executemany('''
                                     INSERT OR IGNORE INTO stock_data (
                                         stock_code, stock_name, date, signal, 
@@ -373,7 +373,14 @@ class StockKlineSpider(scrapy.Spider):
                                     VALUES (?, ?, ?, ?, ?, ?, ?)
                                 ''', signals_to_insert)
                                 self.conn.commit()
-                                
+                            
+                            # 为保证同一股票在同一天只有一条汇总记录，
+                            # 在插入当日 stock_signals 之前，先删除同一股票、同一 insert_date 的旧记录
+                            self.cursor.execute('''
+                                DELETE FROM stock_signals
+                                WHERE stock_code = ? AND insert_date = ?
+                            ''', (stock_code, self.current_time))
+                            
                             self.cursor.execute('''
                                 INSERT INTO stock_signals (
                                     stock_code, stock_name, signal, signal_count,
