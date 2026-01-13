@@ -1092,7 +1092,64 @@ function setupSliderListeners() {
         }
     });
 }
+// 侧边栏收起/展开功能
+function initSidebarToggle() {
+    const sidebar = document.getElementById('sidebar');
+    const toggleBtn = document.getElementById('sidebar-toggle');
+    
+    if (!sidebar || !toggleBtn) return;
+    
+    // 从localStorage读取状态
+    const isCollapsed = localStorage.getItem('sidebarCollapsed') === 'true';
+    if (isCollapsed) {
+        sidebar.classList.add('collapsed');
+        // 更新按钮位置
+        toggleBtn.style.left = '8px';
+        toggleBtn.querySelector('.toggle-icon').style.transform = 'rotate(180deg)';
+    } else {
+        toggleBtn.style.left = '280px';
+        toggleBtn.querySelector('.toggle-icon').style.transform = 'rotate(0deg)';
+    }
+    
+    // 更新main-content的左边距
+    const mainContent = document.querySelector('.main-content');
+    if (mainContent) {
+        mainContent.style.marginLeft = isCollapsed ? '48px' : '48px';
+    }
+    
+    toggleBtn.addEventListener('click', function(e) {
+        e.stopPropagation();
+        const isCollapsed = sidebar.classList.contains('collapsed');
+        const mainContent = document.querySelector('.main-content');
+        
+        if (isCollapsed) {
+            sidebar.classList.remove('collapsed');
+            toggleBtn.style.left = '280px';
+            toggleBtn.querySelector('.toggle-icon').style.transform = 'rotate(0deg)';
+            if (mainContent) mainContent.style.marginLeft = '48px';
+        } else {
+            sidebar.classList.add('collapsed');
+            toggleBtn.style.left = '8px';
+            toggleBtn.querySelector('.toggle-icon').style.transform = 'rotate(180deg)';
+            if (mainContent) mainContent.style.marginLeft = '48px';
+        }
+        
+        // 保存状态到localStorage
+        localStorage.setItem('sidebarCollapsed', !isCollapsed);
+        
+        // 如果切换到时间轴视图，需要重新渲染以适应新的布局
+        const activeTab = document.querySelector('.tab-btn.active');
+        if (activeTab && activeTab.dataset.tab === 'timeline') {
+            setTimeout(() => {
+                renderTimeline();
+            }, 300); // 等待动画完成
+        }
+    });
+}
+
 document.addEventListener("DOMContentLoaded", function() {
+    // 初始化侧边栏收起/展开功能
+    initSidebarToggle();
     setupZoom();
     loadStats();
     loadStockCodes();
@@ -1190,21 +1247,34 @@ async function loadDataList(page = 1) {
             const buyDayChange = signal.buy_day_change_rate != null ? signal.buy_day_change_rate : null;
             const nextDayChange = signal.next_day_change_rate != null ? signal.next_day_change_rate : null;
             
+            // 辅助函数：判断值是否为0，并返回相应的CSS类
+            const getZeroClass = (value) => {
+                if (value === 0 || value === '0' || (typeof value === 'number' && Math.abs(value) < 0.01)) {
+                    return ' zero-value';
+                }
+                return '';
+            };
+            
+            const signalCount = signal.signal_count || 0;
+            const insertPrice = signal.insert_price;
+            const highestDays = signal.highest_days !== null ? signal.highest_days : null;
+            const lowestDays = signal.lowest_days !== null ? signal.lowest_days : null;
+            
             row.innerHTML = `
                 <td>${signal.stock_code || '-'}</td>
                 <td>${signal.stock_name || '-'}</td>
-                <td class="signal-count-cell" data-signals="${signal.signal || ''}">${signal.signal_count || 0}</td>
-                <td><span class="success-rate ${rateClass}">${successRate.toFixed(2)}%</span></td>
+                <td class="signal-count-cell${getZeroClass(signalCount)}" data-signals="${signal.signal || ''}">${signalCount}</td>
+                <td><span class="success-rate ${rateClass}${getZeroClass(successRate)}">${successRate.toFixed(2)}%</span></td>
                 <td>${signal.insert_date ? signal.insert_date.split(' ')[0] : '-'}</td>
-                <td>${signal.insert_price ? signal.insert_price.toFixed(2) : '-'}</td>
-                <td><span class="change-rate ${highestChange >= 0 ? 'positive' : 'negative'}">${highestChange >= 0 ? '+' : ''}${highestChange.toFixed(2)}%</span></td>
+                <td class="${insertPrice != null && insertPrice === 0 ? getZeroClass(insertPrice) : ''}">${insertPrice != null ? insertPrice.toFixed(2) : '-'}</td>
+                <td><span class="change-rate ${highestChange >= 0 ? 'positive' : 'negative'}${getZeroClass(highestChange)}">${highestChange >= 0 ? '+' : ''}${highestChange.toFixed(2)}%</span></td>
                 <td>${signal.highest_price_date || '-'}</td>
-                <td>${signal.highest_days !== null ? signal.highest_days + '天' : '-'}</td>
-                <td><span class="change-rate ${lowestChange >= 0 ? 'positive' : 'negative'}">${lowestChange >= 0 ? '+' : ''}${lowestChange.toFixed(2)}%</span></td>
+                <td class="${getZeroClass(highestDays)}">${highestDays !== null ? highestDays + '天' : '-'}</td>
+                <td><span class="change-rate ${lowestChange >= 0 ? 'positive' : 'negative'}${getZeroClass(lowestChange)}">${lowestChange >= 0 ? '+' : ''}${lowestChange.toFixed(2)}%</span></td>
                 <td>${signal.lowest_price_date || '-'}</td>
-                <td>${signal.lowest_days !== null ? signal.lowest_days + '天' : '-'}</td>
-                <td>${buyDayChange !== null ? `<span class="change-rate ${buyDayChange >= 0 ? 'positive' : 'negative'}">${buyDayChange >= 0 ? '+' : ''}${buyDayChange.toFixed(2)}%</span>` : '-'}</td>
-                <td>${nextDayChange !== null ? `<span class="change-rate ${nextDayChange >= 0 ? 'positive' : 'negative'}">${nextDayChange >= 0 ? '+' : ''}${nextDayChange.toFixed(2)}%</span>` : '-'}</td>
+                <td class="${getZeroClass(lowestDays)}">${lowestDays !== null ? lowestDays + '天' : '-'}</td>
+                <td>${buyDayChange !== null ? `<span class="change-rate ${buyDayChange >= 0 ? 'positive' : 'negative'}${getZeroClass(buyDayChange)}">${buyDayChange >= 0 ? '+' : ''}${buyDayChange.toFixed(2)}%</span>` : '-'}</td>
+                <td>${nextDayChange !== null ? `<span class="change-rate ${nextDayChange >= 0 ? 'positive' : 'negative'}${getZeroClass(nextDayChange)}">${nextDayChange >= 0 ? '+' : ''}${nextDayChange.toFixed(2)}%</span>` : '-'}</td>
             `;
             
             // 为信号数列添加tooltip

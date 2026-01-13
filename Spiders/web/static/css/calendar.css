@@ -26,7 +26,7 @@ body {
     background: linear-gradient(135deg, #667eea 0%, #764ba2 50%, #f093fb 100%);
     background-attachment: fixed;
     min-height: 100vh;
-    padding: 20px;
+    padding: 8px;
     position: relative;
 }
 
@@ -56,9 +56,9 @@ body::before {
     backdrop-filter: blur(20px) saturate(180%);
     -webkit-backdrop-filter: blur(20px) saturate(180%);
     border: 1px solid var(--glass-border);
-    border-radius: 20px;
-    padding: 24px 32px;
-    margin-bottom: 24px;
+    border-radius: 12px;
+    padding: 10px 16px;
+    margin-bottom: 8px;
     box-shadow: var(--shadow-xl), 0 0 0 1px rgba(255, 255, 255, 0.1) inset;
     display: flex;
     align-items: center;
@@ -76,29 +76,29 @@ body::before {
     gap: 6px;
 }
 .header-title {
-    font-size: 28px;
+    font-size: 18px;
     font-weight: 700;
     background: var(--primary-gradient);
     -webkit-background-clip: text;
     -webkit-text-fill-color: transparent;
     background-clip: text;
-    letter-spacing: -0.5px;
-    margin-bottom: 4px;
+    letter-spacing: -0.3px;
+    margin-bottom: 0;
     display: flex;
     align-items: center;
-    gap: 12px;
+    gap: 8px;
 }
 
 .header-icon {
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    width: 44px;
-    height: 44px;
+    width: 28px;
+    height: 28px;
     background: var(--primary-gradient);
-    border-radius: 12px;
-    padding: 8px;
-    box-shadow: 0 4px 16px rgba(102, 126, 234, 0.4);
+    border-radius: 8px;
+    padding: 4px;
+    box-shadow: 0 2px 8px rgba(102, 126, 234, 0.4);
     flex-shrink: 0;
     color: #ffffff;
     transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
@@ -115,7 +115,7 @@ body::before {
     filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.2));
 }
 .header-subtitle {
-    font-size: 14px;
+    font-size: 11px;
     color: var(--text-tertiary);
     font-weight: 500;
 }
@@ -124,16 +124,16 @@ body::before {
     gap: 10px;
 }
 .btn {
-    padding: 12px 24px;
-    border-radius: 12px;
+    padding: 6px 14px;
+    border-radius: 8px;
     border: none;
-    font-size: 14px;
+    font-size: 12px;
     font-weight: 600;
     cursor: pointer;
     transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
     position: relative;
     overflow: hidden;
-    letter-spacing: 0.3px;
+    letter-spacing: 0.2px;
 }
 
 .btn::before {
@@ -218,18 +218,18 @@ body::before {
     gap: 6px;
 }
 .control-label {
-    font-size: 13px;
+    font-size: 11px;
     font-weight: 600;
     color: var(--text-secondary);
-    margin-bottom: 8px;
+    margin-bottom: 4px;
     letter-spacing: 0.2px;
 }
 
 .control-input {
-    padding: 12px 16px;
-    border-radius: 12px;
-    border: 2px solid var(--border-color);
-    font-size: 14px;
+    padding: 6px 10px;
+    border-radius: 8px;
+    border: 1px solid var(--border-color);
+    font-size: 12px;
     width: 100%;
     box-sizing: border-box;
     background: rgba(255, 255, 255, 0.9);
@@ -933,13 +933,13 @@ select.control-input optgroup {
     backdrop-filter: blur(20px) saturate(180%);
     -webkit-backdrop-filter: blur(20px) saturate(180%);
     border: 1px solid var(--glass-border);
-    border-radius: 20px;
-    padding: 24px 32px;
-    margin-bottom: 24px;
+    border-radius: 12px;
+    padding: 12px;
+    margin-bottom: 8px;
     box-shadow: var(--shadow-lg), 0 0 0 1px rgba(255, 255, 255, 0.1) inset;
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-    gap: 24px;
+    grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+    gap: 10px;
     transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
@@ -950,10 +950,10 @@ select.control-input optgroup {
 .stat-item {
     display: flex;
     flex-direction: column;
-    gap: 8px;
-    padding: 16px;
+    gap: 4px;
+    padding: 8px;
     background: rgba(255, 255, 255, 0.5);
-    border-radius: 16px;
+    border-radius: 8px;
     border: 1px solid rgba(255, 255, 255, 0.3);
     transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
 }
@@ -965,18 +965,18 @@ select.control-input optgroup {
 }
 
 .stat-label {
-    font-size: 13px;
+    font-size: 10px;
     font-weight: 600;
     color: var(--text-tertiary);
     text-transform: uppercase;
-    letter-spacing: 0.5px;
+    letter-spacing: 0.3px;
 }
 
 .stat-value {
-    font-size: 32px;
+    font-size: 20px;
     font-weight: 700;
     color: var(--text-primary);
-    letter-spacing: -1px;
+    letter-spacing: -0.5px;
 }
 .stat-value.positive {
     color: #e53935;
@@ -991,7 +991,7 @@ select.control-input optgroup {
     border: 1px solid var(--glass-border);
     border-radius: 20px;
     padding: 24px 32px;
-    margin-bottom: 24px;
+    margin-bottom: 8px;
     box-shadow: var(--shadow-xl), 0 0 0 1px rgba(255, 255, 255, 0.1) inset;
     transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
 }
@@ -1137,7 +1137,7 @@ select.control-input optgroup {
     backdrop-filter: blur(20px) saturate(180%);
     -webkit-backdrop-filter: blur(20px) saturate(180%);
     border: 1px solid var(--glass-border);
-    border-radius: 20px;
+    border-radius: 12px;
     padding: 0;
     box-shadow: var(--shadow-xl), 0 0 0 1px rgba(255, 255, 255, 0.1) inset;
     overflow: hidden;
@@ -1152,7 +1152,8 @@ select.control-input optgroup {
 
 .data-list-table-wrapper {
     flex: 1;
-    overflow: visible;
+    overflow-x: auto;
+    overflow-y: auto;
     padding: 0;
     position: relative;
 }
@@ -1161,10 +1162,10 @@ select.control-input optgroup {
     width: 100%;
     border-collapse: separate;
     border-spacing: 0;
-    font-size: 13px;
+    font-size: 11px;
     min-width: 1400px;
     background: rgba(255, 255, 255, 0.5);
-    border-radius: 20px 20px 0 0;
+    border-radius: 12px 12px 0 0;
     overflow: hidden;
 }
 
@@ -1174,8 +1175,8 @@ select.control-input optgroup {
     position: sticky;
     top: 0;
     z-index: 100;
-    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.2), 0 2px 0 rgba(255, 255, 255, 0.1) inset;
-    border-radius: 20px 20px 0 0;
+    box-shadow: 0 2px 12px rgba(0, 0, 0, 0.2), 0 1px 0 rgba(255, 255, 255, 0.1) inset;
+    border-radius: 12px 12px 0 0;
     overflow: hidden;
 }
 
@@ -1190,10 +1191,10 @@ select.control-input optgroup {
     pointer-events: none;
 }
 .data-list-table th {
-    padding: 16px 12px;
+    padding: 8px 10px;
     text-align: left;
     font-weight: 700;
-    font-size: 13px;
+    font-size: 11px;
     white-space: nowrap;
     cursor: pointer;
     user-select: none;
@@ -1201,7 +1202,7 @@ select.control-input optgroup {
     color: white;
     border-bottom: 2px solid rgba(255, 255, 255, 0.2);
     transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
-    letter-spacing: 0.3px;
+    letter-spacing: 0.2px;
 }
 
 .data-list-table thead tr:first-child th:first-child {
@@ -1213,11 +1214,11 @@ select.control-input optgroup {
 }
 
 .data-list-table th:first-child {
-    padding-left: 24px;
+    padding-left: 12px;
 }
 
 .data-list-table th:last-child {
-    padding-right: 24px;
+    padding-right: 12px;
 }
 
 .data-list-table th:hover {
@@ -1237,21 +1238,21 @@ select.control-input optgroup {
     opacity: 1;
 }
 .data-list-table td {
-    padding: 16px 12px;
+    padding: 6px 10px;
     border-bottom: 1px solid rgba(226, 232, 240, 0.5);
     white-space: nowrap;
     background: inherit;
     transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
-    font-size: 13px;
+    font-size: 11px;
     color: var(--text-primary);
 }
 
 .data-list-table td:first-child {
-    padding-left: 24px;
+    padding-left: 12px;
 }
 
 .data-list-table td:last-child {
-    padding-right: 24px;
+    padding-right: 12px;
 }
 
 .data-list-table tbody tr {
@@ -1458,12 +1459,19 @@ select.control-input optgroup {
     color: #4caf50;
     font-weight: 700;
 }
+.data-list-table .zero-value,
+.data-list-table .change-rate.zero-value,
+.data-list-table .success-rate.zero-value {
+    color: #9e9e9e !important;
+    opacity: 0.6;
+}
 /* 优化后的布局样式 */
 .content-wrapper {
     display: flex;
-    gap: 24px;
+    gap: 8px;
     align-items: flex-start;
-    min-height: calc(100vh - 200px);
+    min-height: calc(100vh - 120px);
+    position: relative;
 }
 
 .footer {
@@ -1495,15 +1503,79 @@ select.control-input optgroup {
 }
 
 .sidebar {
-    width: 340px;
+    width: 280px;
     flex-shrink: 0;
     display: flex;
     flex-direction: column;
-    gap: 20px;
+    gap: 8px;
     overflow-y: visible;
-    padding: 0 8px;
+    padding: 0 4px;
     scrollbar-width: thin;
     scrollbar-color: #667eea #f0f0f0;
+    transition: width 0.3s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    position: relative;
+}
+
+.sidebar.collapsed {
+    width: 0;
+    padding: 0;
+    opacity: 0;
+    overflow: hidden;
+}
+
+.sidebar-toggle {
+    position: absolute;
+    top: 10px;
+    left: 280px;
+    width: 36px;
+    height: 36px;
+    background: linear-gradient(135deg, rgba(102, 126, 234, 0.95) 0%, rgba(118, 75, 162, 0.95) 100%);
+    border: 2px solid rgba(255, 255, 255, 0.4);
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    z-index: 1001;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15), 0 0 0 1px rgba(255, 255, 255, 0.1) inset;
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+}
+
+.sidebar-toggle:hover {
+    transform: scale(1.08) translateY(-1px);
+    box-shadow: 0 6px 16px rgba(0, 0, 0, 0.2), 0 0 0 1px rgba(255, 255, 255, 0.2) inset;
+    background: linear-gradient(135deg, rgba(102, 126, 234, 1) 0%, rgba(118, 75, 162, 1) 100%);
+}
+
+.sidebar-toggle:active {
+    transform: scale(1.0) translateY(0);
+}
+
+.sidebar-toggle .toggle-icon {
+    width: 16px;
+    height: 16px;
+    stroke: white;
+    stroke-width: 2.8;
+    fill: none;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+    transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.sidebar.collapsed + .main-content {
+    margin-left: 48px;
+    flex: 1;
+    min-width: 0;
+}
+
+.sidebar.collapsed ~ .sidebar-toggle {
+    left: 8px;
+}
+
+.sidebar.collapsed ~ .sidebar-toggle .toggle-icon {
+    transform: rotate(180deg);
 }
 
 .sidebar::-webkit-scrollbar {
@@ -1528,6 +1600,8 @@ select.control-input optgroup {
     flex: 1;
     min-width: 0;
     overflow: visible;
+    margin-left: 48px;
+    transition: margin-left 0.3s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 .main-content::-webkit-scrollbar {
@@ -1552,7 +1626,7 @@ select.control-input optgroup {
 .tabs-nav {
     display: flex;
     gap: 0;
-    margin-bottom: 24px;
+    margin-bottom: 8px;
     background: var(--glass-bg);
     backdrop-filter: blur(20px) saturate(180%);
     -webkit-backdrop-filter: blur(20px) saturate(180%);
@@ -1564,18 +1638,18 @@ select.control-input optgroup {
 
 .tab-btn {
     flex: 1;
-    padding: 14px 24px;
+    padding: 8px 16px;
     border: none;
     background: transparent;
-    font-size: 15px;
+    font-size: 12px;
     font-weight: 600;
     color: var(--text-secondary);
     cursor: pointer;
     position: relative;
-    border-radius: 12px;
+    border-radius: 8px;
     transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
     text-align: center;
-    min-height: 48px;
+    min-height: 32px;
     display: flex;
     align-items: center;
     justify-content: center;
@@ -1658,8 +1732,8 @@ select.control-input optgroup {
     backdrop-filter: blur(20px) saturate(180%);
     -webkit-backdrop-filter: blur(20px) saturate(180%);
     border: 1px solid var(--glass-border);
-    border-radius: 20px;
-    padding: 24px;
+    border-radius: 12px;
+    padding: 12px;
     box-shadow: var(--shadow-lg), 0 0 0 1px rgba(255, 255, 255, 0.1) inset;
     transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
     width: 100%;
@@ -1673,8 +1747,8 @@ select.control-input optgroup {
 
 .sidebar .controls-row {
     grid-template-columns: 1fr;
-    gap: 16px;
-    margin-bottom: 16px;
+    gap: 10px;
+    margin-bottom: 10px;
 }
 
 .sidebar .controls-row:last-child {

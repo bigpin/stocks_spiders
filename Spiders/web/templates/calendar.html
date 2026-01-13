@@ -33,7 +33,12 @@
         </div>
 
         <div class="content-wrapper">
-            <div class="sidebar">
+            <button class="sidebar-toggle" id="sidebar-toggle" title="收起/展开筛选区">
+                <svg class="toggle-icon" viewBox="0 0 24 24">
+                    <path d="M15 18l-6-6 6-6"/>
+                </svg>
+            </button>
+            <div class="sidebar" id="sidebar">
                 <!-- Timeline Controls -->
                 <div class="controls" id="timeline-controls">
                     <div class="controls-row">
@@ -444,15 +449,15 @@
                                         <th class="sortable" onclick="sortDataList('signal_count')">信号数</th>
                                         <th class="sortable" onclick="sortDataList('overall_success_rate')">成功率</th>
                                         <th class="sortable" onclick="sortDataList('insert_date')">插入日期</th>
-                                        <th>插入价格</th>
+                                        <th class="sortable" onclick="sortDataList('insert_price')">插入价格</th>
                                         <th class="sortable" onclick="sortDataList('highest_change_rate')">最高涨幅</th>
-                                        <th>最高价日期</th>
-                                        <th>最高价天数</th>
-                                        <th>最低涨幅</th>
-                                        <th>最低价日期</th>
-                                        <th>最低价天数</th>
-                                        <th>买入当天涨跌</th>
-                                        <th>第二天涨跌</th>
+                                        <th class="sortable" onclick="sortDataList('highest_price_date')">最高价日期</th>
+                                        <th class="sortable" onclick="sortDataList('highest_days')">最高价天数</th>
+                                        <th class="sortable" onclick="sortDataList('lowest_change_rate')">最低涨幅</th>
+                                        <th class="sortable" onclick="sortDataList('lowest_price_date')">最低价日期</th>
+                                        <th class="sortable" onclick="sortDataList('lowest_days')">最低价天数</th>
+                                        <th class="sortable" onclick="sortDataList('buy_day_change_rate')">买入当天涨跌</th>
+                                        <th class="sortable" onclick="sortDataList('next_day_change_rate')">第二天涨跌</th>
                                     </tr>
                                 </thead>
                                 <tbody id="data-list-table-body">

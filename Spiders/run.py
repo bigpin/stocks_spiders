@@ -76,7 +76,7 @@ if __name__ == "__main__":
     # run_stock_detail_spider()
     
     # 运行获取带技术指标K线数据的爬虫
-    run_stock_kline_spider_with_indicators(STOCK_CODES)
-    # run_stock_kline_spider_with_yesterday(STOCK_CODES)
+    # run_stock_kline_spider_with_indicators(STOCK_CODES)
+    run_stock_kline_spider_with_yesterday(STOCK_CODES)
     # 运行获取不带技术指标K线数据的爬虫
     # run_stock_kline_spider_without_indicators()

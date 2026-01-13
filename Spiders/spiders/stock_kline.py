@@ -653,67 +653,87 @@ class StockKlineSpider(scrapy.Spider):
             signals_for_day = []  # 存储当天的所有信号
             
             # KDJ信号判断
-            if current_row['K_9_3'] < 20 and current_row['D_9_3'] < 20:
+            if (current_row.get('K_9_3') is not None and current_row.get('D_9_3') is not None and
+                current_row['K_9_3'] < 20 and current_row['D_9_3'] < 20):
                 signals_for_day.append(('KDJ超卖', 'kdj_oversold'))
-            if (prev_row['K_9_3'] < prev_row['D_9_3'] and 
+            if (prev_row.get('K_9_3') is not None and prev_row.get('D_9_3') is not None and
+                current_row.get('K_9_3') is not None and current_row.get('D_9_3') is not None and
+                prev_row['K_9_3'] < prev_row['D_9_3'] and 
                 current_row['K_9_3'] > current_row['D_9_3']):
                 signals_for_day.append(('KDJ金叉', 'kdj_golden_cross'))
-            if (current_row['close'] < df.iloc[i-5:i]['close'].min() and 
+            if (current_row.get('K_9_3') is not None and
+                current_row['close'] < df.iloc[i-5:i]['close'].min() and 
                 current_row['K_9_3'] > df.iloc[i-5:i]['K_9_3'].min()):
                 signals_for_day.append(('KDJ底背离', 'kdj_divergence'))
                 
             # MACD信号判断
-            if (prev_row.get('MACD_12_26_9') is not None and 
+            if (prev_row.get('MACD_12_26_9') is not None and prev_row.get('MACDs_12_26_9') is not None and
+                current_row.get('MACD_12_26_9') is not None and current_row.get('MACDs_12_26_9') is not None and
                 prev_row['MACD_12_26_9'] < prev_row['MACDs_12_26_9'] and 
                 current_row['MACD_12_26_9'] > current_row['MACDs_12_26_9']):
                 signals_for_day.append(('MACD金叉', 'macd_golden_cross'))
             if (prev_row.get('MACD_12_26_9') is not None and 
                 prev_row['MACD_12_26_9'] < 0 and 
+                current_row.get('MACD_12_26_9') is not None and
                 current_row['MACD_12_26_9'] > 0):
                 signals_for_day.append(('MACD零轴上穿', 'macd_zero_cross'))
-            if (current_row['close'] < df.iloc[i-5:i]['close'].min() and 
+            if (current_row.get('MACD_12_26_9') is not None and
+                current_row['close'] < df.iloc[i-5:i]['close'].min() and 
                 current_row['MACD_12_26_9'] > df.iloc[i-5:i]['MACD_12_26_9'].min()):
                 signals_for_day.append(('MACD底背离', 'macd_divergence'))
                 
             # RSI信号判断
-            if current_row['RSI_6'] < 20:
+            if (current_row.get('RSI_6') is not None and current_row['RSI_6'] < 20):
                 signals_for_day.append(('RSI超卖', 'rsi_oversold'))
-            if (prev_row['RSI_6'] < prev_row['RSI_12'] and 
+            if (prev_row.get('RSI_6') is not None and prev_row.get('RSI_12') is not None and
+                current_row.get('RSI_6') is not None and current_row.get('RSI_12') is not None and
+                prev_row['RSI_6'] < prev_row['RSI_12'] and 
                 current_row['RSI_6'] > current_row['RSI_12']):
                 signals_for_day.append(('RSI金叉', 'rsi_golden_cross'))
                 
             # BOLL信号判断
-            if (current_row['close'] <= current_row['BBL_20_2.0'] * 1.01):
+            if (current_row.get('BBL_20_2.0') is not None and
+                current_row['close'] <= current_row['BBL_20_2.0'] * 1.01):
                 signals_for_day.append(('BOLL下轨支撑', 'boll_bottom_touch'))
-            if (current_row['BBB_20_2.0'] > prev_row['BBB_20_2.0'] * 1.1):
+            if (current_row.get('BBB_20_2.0') is not None and prev_row.get('BBB_20_2.0') is not None and
+                current_row['BBB_20_2.0'] > prev_row['BBB_20_2.0'] * 1.1):
                 signals_for_day.append(('BOLL带宽扩张', 'boll_width_expand'))
             
             # MA信号判断
-            if (prev_row['SMA_5'] < prev_row['SMA_20'] and 
+            if (prev_row.get('SMA_5') is not None and prev_row.get('SMA_20') is not None and
+                current_row.get('SMA_5') is not None and current_row.get('SMA_20') is not None and
+                prev_row['SMA_5'] < prev_row['SMA_20'] and 
                 current_row['SMA_5'] > current_row['SMA_20']):
                 signals_for_day.append(('MA5上穿MA20', 'ma_golden_cross'))
-            if (current_row['close'] > current_row['SMA_20'] * 0.99 and 
+            if (current_row.get('SMA_20') is not None and
+                current_row['close'] > current_row['SMA_20'] * 0.99 and 
                 current_row['close'] < current_row['SMA_20'] * 1.01):
                 signals_for_day.append(('MA20支撑', 'ma_support'))
             
             # DMI信号判断
-            if (prev_row['DMP_14'] < prev_row['DMN_14'] and 
+            if (prev_row.get('DMP_14') is not None and prev_row.get('DMN_14') is not None and
+                current_row.get('DMP_14') is not None and current_row.get('DMN_14') is not None and
+                current_row.get('ADX_14') is not None and
+                prev_row['DMP_14'] < prev_row['DMN_14'] and 
                 current_row['DMP_14'] > current_row['DMN_14'] and 
                 current_row['ADX_14'] > 20):
                 signals_for_day.append(('DMI金叉', 'dmi_golden_cross'))
-            if current_row['ADX_14'] > 30:
+            if (current_row.get('ADX_14') is not None and current_row['ADX_14'] > 30):
                 signals_for_day.append(('ADX强势', 'dmi_adx_strong'))
             
             # CCI信号判断
-            if current_row['CCI_20'] < -100:
+            if (current_row.get('CCI_20') is not None and current_row['CCI_20'] < -100):
                 signals_for_day.append(('CCI超卖', 'cci_oversold'))
-            if (prev_row['CCI_20'] < 0 and current_row['CCI_20'] > 0):
+            if (prev_row.get('CCI_20') is not None and current_row.get('CCI_20') is not None and
+                prev_row['CCI_20'] < 0 and current_row['CCI_20'] > 0):
                 signals_for_day.append(('CCI零轴上穿', 'cci_zero_cross'))
             
             # ROC信号判断
-            if (prev_row['ROC_12'] < 0 and current_row['ROC_12'] > 0):
+            if (prev_row.get('ROC_12') is not None and current_row.get('ROC_12') is not None and
+                prev_row['ROC_12'] < 0 and current_row['ROC_12'] > 0):
                 signals_for_day.append(('ROC零轴上穿', 'roc_zero_cross'))
-            if (current_row['close'] < df.iloc[i-5:i]['close'].min() and 
+            if (current_row.get('ROC_12') is not None and
+                current_row['close'] < df.iloc[i-5:i]['close'].min() and 
                 current_row['ROC_12'] > df.iloc[i-5:i]['ROC_12'].min()):
                 signals_for_day.append(('ROC底背离', 'roc_divergence'))
 
@@ -802,67 +822,87 @@ class StockKlineSpider(scrapy.Spider):
                 signals_for_day = []  # 存储当天的所有信号
                 
                 # KDJ信号判断
-                if current_row['K_9_3'] < 20 and current_row['D_9_3'] < 20:
+                if (current_row.get('K_9_3') is not None and current_row.get('D_9_3') is not None and
+                    current_row['K_9_3'] < 20 and current_row['D_9_3'] < 20):
                     signals_for_day.append(('KDJ超卖', 'kdj_oversold'))
-                if (prev_row['K_9_3'] < prev_row['D_9_3'] and 
+                if (prev_row.get('K_9_3') is not None and prev_row.get('D_9_3') is not None and
+                    current_row.get('K_9_3') is not None and current_row.get('D_9_3') is not None and
+                    prev_row['K_9_3'] < prev_row['D_9_3'] and 
                     current_row['K_9_3'] > current_row['D_9_3']):
                     signals_for_day.append(('KDJ金叉', 'kdj_golden_cross'))
-                if (current_row['close'] < df.iloc[-3:].iloc[:i+1]['close'].min() and 
+                if (current_row.get('K_9_3') is not None and
+                    current_row['close'] < df.iloc[-3:].iloc[:i+1]['close'].min() and 
                     current_row['K_9_3'] > df.iloc[-3:].iloc[:i+1]['K_9_3'].min()):
                     signals_for_day.append(('KDJ底背离', 'kdj_divergence'))
                     
                 # MACD信号判断
-                if (prev_row.get('MACD_12_26_9') is not None and 
+                if (prev_row.get('MACD_12_26_9') is not None and prev_row.get('MACDs_12_26_9') is not None and
+                    current_row.get('MACD_12_26_9') is not None and current_row.get('MACDs_12_26_9') is not None and
                     prev_row['MACD_12_26_9'] < prev_row['MACDs_12_26_9'] and 
                     current_row['MACD_12_26_9'] > current_row['MACDs_12_26_9']):
                     signals_for_day.append(('MACD金叉', 'macd_golden_cross'))
                 if (prev_row.get('MACD_12_26_9') is not None and 
                     prev_row['MACD_12_26_9'] < 0 and 
+                    current_row.get('MACD_12_26_9') is not None and
                     current_row['MACD_12_26_9'] > 0):
                     signals_for_day.append(('MACD零轴上穿', 'macd_zero_cross'))
-                if (current_row['close'] < df.iloc[-3:].iloc[:i+1]['close'].min() and 
+                if (current_row.get('MACD_12_26_9') is not None and
+                    current_row['close'] < df.iloc[-3:].iloc[:i+1]['close'].min() and 
                     current_row['MACD_12_26_9'] > df.iloc[-3:].iloc[:i+1]['MACD_12_26_9'].min()):
                     signals_for_day.append(('MACD底背离', 'macd_divergence'))
                 
                 # RSI信号判断
-                if current_row['RSI_6'] < 20:
+                if (current_row.get('RSI_6') is not None and current_row['RSI_6'] < 20):
                     signals_for_day.append(('RSI超卖', 'rsi_oversold'))
-                if (prev_row['RSI_6'] < prev_row['RSI_12'] and 
+                if (prev_row.get('RSI_6') is not None and prev_row.get('RSI_12') is not None and
+                    current_row.get('RSI_6') is not None and current_row.get('RSI_12') is not None and
+                    prev_row['RSI_6'] < prev_row['RSI_12'] and 
                     current_row['RSI_6'] > current_row['RSI_12']):
                     signals_for_day.append(('RSI金叉', 'rsi_golden_cross'))
                 
                 # BOLL信号判断
-                if (current_row['close'] <= current_row['BBL_20_2.0'] * 1.01):
+                if (current_row.get('BBL_20_2.0') is not None and
+                    current_row['close'] <= current_row['BBL_20_2.0'] * 1.01):
                     signals_for_day.append(('BOLL下轨支撑', 'boll_bottom_touch'))
-                if (current_row['BBB_20_2.0'] > prev_row['BBB_20_2.0'] * 1.1):
+                if (current_row.get('BBB_20_2.0') is not None and prev_row.get('BBB_20_2.0') is not None and
+                    current_row['BBB_20_2.0'] > prev_row['BBB_20_2.0'] * 1.1):
                     signals_for_day.append(('BOLL带宽扩张', 'boll_width_expand'))
                 
                 # MA信号判断
-                if (prev_row['SMA_5'] < prev_row['SMA_20'] and 
+                if (prev_row.get('SMA_5') is not None and prev_row.get('SMA_20') is not None and
+                    current_row.get('SMA_5') is not None and current_row.get('SMA_20') is not None and
+                    prev_row['SMA_5'] < prev_row['SMA_20'] and 
                     current_row['SMA_5'] > current_row['SMA_20']):
                     signals_for_day.append(('MA5上穿MA20', 'ma_golden_cross'))
-                if (current_row['close'] > current_row['SMA_20'] * 0.99 and 
+                if (current_row.get('SMA_20') is not None and
+                    current_row['close'] > current_row['SMA_20'] * 0.99 and 
                     current_row['close'] < current_row['SMA_20'] * 1.01):
                     signals_for_day.append(('MA20支撑', 'ma_support'))
                 
                 # DMI信号判断
-                if (prev_row['DMP_14'] < prev_row['DMN_14'] and 
+                if (prev_row.get('DMP_14') is not None and prev_row.get('DMN_14') is not None and
+                    current_row.get('DMP_14') is not None and current_row.get('DMN_14') is not None and
+                    current_row.get('ADX_14') is not None and
+                    prev_row['DMP_14'] < prev_row['DMN_14'] and 
                     current_row['DMP_14'] > current_row['DMN_14'] and 
                     current_row['ADX_14'] > 20):
                     signals_for_day.append(('DMI金叉', 'dmi_golden_cross'))
-                if current_row['ADX_14'] > 30:
+                if (current_row.get('ADX_14') is not None and current_row['ADX_14'] > 30):
                     signals_for_day.append(('ADX强势', 'dmi_adx_strong'))
                 
                 # CCI信号判断
-                if current_row['CCI_20'] < -100:
+                if (current_row.get('CCI_20') is not None and current_row['CCI_20'] < -100):
                     signals_for_day.append(('CCI超卖', 'cci_oversold'))
-                if (prev_row['CCI_20'] < 0 and current_row['CCI_20'] > 0):
+                if (prev_row.get('CCI_20') is not None and current_row.get('CCI_20') is not None and
+                    prev_row['CCI_20'] < 0 and current_row['CCI_20'] > 0):
                     signals_for_day.append(('CCI零轴上穿', 'cci_zero_cross'))
                 
                 # ROC信号判断
-                if (prev_row['ROC_12'] < 0 and current_row['ROC_12'] > 0):
+                if (prev_row.get('ROC_12') is not None and current_row.get('ROC_12') is not None and
+                    prev_row['ROC_12'] < 0 and current_row['ROC_12'] > 0):
                     signals_for_day.append(('ROC零轴上穿', 'roc_zero_cross'))
-                if (current_row['close'] < df.iloc[-3:].iloc[:i+1]['close'].min() and 
+                if (current_row.get('ROC_12') is not None and
+                    current_row['close'] < df.iloc[-3:].iloc[:i+1]['close'].min() and 
                     current_row['ROC_12'] > df.iloc[-3:].iloc[:i+1]['ROC_12'].min()):
                     signals_for_day.append(('ROC底背离', 'roc_divergence'))
 

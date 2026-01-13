@@ -81,7 +81,12 @@ def get_signals():
         query += " AND insert_date <= ?"
         params.append(date_to)
     
-    valid_sort_columns = ['created_at', 'overall_success_rate', 'signal_count', 'insert_date', 'highest_change_rate']
+    valid_sort_columns = [
+        'created_at', 'stock_code', 'stock_name', 'overall_success_rate', 
+        'signal_count', 'insert_date', 'insert_price', 'highest_change_rate', 
+        'highest_price_date', 'highest_days', 'lowest_change_rate', 
+        'lowest_price_date', 'lowest_days', 'buy_day_change_rate', 'next_day_change_rate'
+    ]
     if sort_by not in valid_sort_columns:
         sort_by = 'created_at'
     
