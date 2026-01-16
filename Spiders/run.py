@@ -3,6 +3,9 @@ from scrapy.utils.project import get_project_settings
 from spiders.get_stock_list import StockListSpider
 from scrapy import cmdline
 from datetime import datetime, timedelta
+import os
+import sys
+import subprocess
 
 def run_stock_list_spider():
     """获取股票列表"""
@@ -43,6 +46,56 @@ def run_stock_kline_spider_without_indicators(stock_codes='sh603288'):
     """获取不带技术指标的K线数据"""
     cmdline.execute(f'scrapy crawl stock_kline -a stock_codes={stock_codes} -a calc_indicators=false'.split())
 
+def upload_daily_report_to_cloudbase(report_date=None):
+    """
+    上传当天的信号分析报告到云数据库
+    
+    Args:
+        report_date: 日期字符串，格式 YYYYMMDD，如果为None则使用当天日期
+    """
+    if report_date is None:
+        report_date = datetime.now().strftime('%Y%m%d')
+    
+    # 报告文件路径（在项目根目录）
+    project_root = os.path.dirname(os.path.dirname(__file__))
+    report_file = os.path.join(project_root, f'kdj_signals_{report_date}.txt')
+    
+    # 检查文件是否存在
+    if not os.path.exists(report_file):
+        print(f"[WARNING] 报告文件不存在: {report_file}，跳过上传", file=sys.stderr)
+        return False
+    
+    # 上传脚本路径
+    upload_script = os.path.join(project_root, 'Spiders', 'web', 'upload_daily_report_to_cloudbase.py')
+    
+    if not os.path.exists(upload_script):
+        print(f"[ERROR] 上传脚本不存在: {upload_script}", file=sys.stderr)
+        return False
+    
+    try:
+        # 调用上传脚本
+        result = subprocess.run(
+            [sys.executable, upload_script, '--file', report_file],
+            cwd=project_root,
+            capture_output=True,
+            text=True,
+            encoding='utf-8'
+        )
+        
+        if result.returncode == 0:
+            print(f"[OK] 报告已成功上传到云数据库: {report_file}")
+            if result.stdout:
+                print(result.stdout)
+            return True
+        else:
+            print(f"[ERROR] 上传报告失败 (exit code {result.returncode}): {report_file}", file=sys.stderr)
+            if result.stderr:
+                print(result.stderr, file=sys.stderr)
+            return False
+    except Exception as e:
+        print(f"[ERROR] 上传报告时发生异常: {e}", file=sys.stderr)
+        return False
+
 # 股票代码列表
 STOCK_CODES = (
     'sz001280'
@@ -69,6 +122,25 @@ STOCK_CODES = (
 )
 
 if __name__ == "__main__":
+    # 清空日志文件（如果存在），实现每次启动覆盖
+    log_file = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'logs', 'spiders.log')
+    log_dir = os.path.dirname(log_file)
+    
+    # 确保日志目录存在
+    if not os.path.exists(log_dir):
+        os.makedirs(log_dir)
+    
+    # 清空日志文件（覆盖模式）
+    try:
+        with open(log_file, 'w', encoding='utf-8') as f:
+            f.write(f"=== 爬虫任务启动 - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} ===\n")
+            f.write(f"工作目录: {os.getcwd()}\n")
+            f.write(f"Python路径: {sys.executable}\n")
+            f.write("=" * 80 + "\n\n")
+    except Exception as e:
+        # 如果无法写入日志文件，输出到stderr
+        print(f"警告: 无法清空日志文件 {log_file}: {e}", file=sys.stderr)
+    
     # 运行获取股票列表的爬虫
     # run_stock_list_spider()
     
@@ -80,3 +152,20 @@ if __name__ == "__main__":
     # run_stock_kline_spider_with_yesterday(STOCK_CODES)
     # 运行获取不带技术指标K线数据的爬虫
     # run_stock_kline_spider_without_indicators()
+    
+    # 爬虫运行完成后，上传当天的信号分析报告到云数据库
+    print("\n" + "=" * 80)
+    print("开始上传信号分析报告到云数据库...")
+    print("=" * 80)
+    
+    # 获取爬虫使用的日期（如果有 end_date 参数，使用该日期；否则使用当天）
+    # 由于爬虫可能使用 end_date，我们需要从爬虫逻辑中获取，这里先使用当天日期
+    # 如果爬虫使用了 end_date，可以在调用时传入
+    upload_success = upload_daily_report_to_cloudbase()
+    
+    if upload_success:
+        print("[OK] 信号分析报告上传完成")
+    else:
+        print("[WARNING] 信号分析报告上传失败，请检查日志")
+    
+    print("=" * 80 + "\n")

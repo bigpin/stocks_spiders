@@ -32,3 +32,4 @@ ENV/
 debug.html
 stock_list.txt
 com.dingli.spiders.run.plist
+Spiders/web/.env

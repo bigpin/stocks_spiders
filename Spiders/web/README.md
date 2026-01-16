@@ -59,6 +59,42 @@ python app.py
 
 ## 使用说明
 
+## 每日报告上传到腾讯云云数据库（CloudBase HTTP API）
+
+本目录新增了两个脚本，用于把 `kdj_signals_YYYYMMDD.txt` 解析为结构化数据并上传到云数据库（单集合 `stock_signals`），并提供查询/删除/导出能力。
+
+- **上传脚本**：`upload_daily_report_to_cloudbase.py`
+- **管理脚本**：`manage_cloud_stock_signals.py`
+
+### 数据结构（单集合，report_id 关联形成完整报告）
+
+- `doc_type=stock_summary`：每个股票一条“报告头”（`_id == report_id == report_{report_date}_{stock_code}`）
+- `doc_type=signal_event`：每条“信号明细”（`report_id` 指向对应的 `stock_summary`，形成完整报告）
+
+### 配置（不要把 AppSecret 提交到仓库）
+
+请在 `Spiders/web/` 下创建 `.env`（可参考 `env.example`），内容为：
+
+- `CLOUDBASE_ENV_ID`
+- `WECHAT_APPID`
+- `WECHAT_APPSECRET`
+
+同时建议把 `.env` 与 `.cache/` 加入 `.gitignore`（可参考 `gitignore.snippet`）。
+
+### 常用命令示例
+
+- 上传某天报告（幂等，重复上传会覆盖同一 `_id`）：  
+  `python3 upload_daily_report_to_cloudbase.py --file /Users/dingli/Documents/UGit/Spiders/kdj_signals_20260115.txt`
+
+- 获取完整报告（报告头 + 明细）：  
+  `python3 manage_cloud_stock_signals.py get-report --report_date 2026-01-15 --stock_code sh601231`
+
+- 删除某天某股票报告（危险操作）：  
+  `python3 manage_cloud_stock_signals.py delete-report --report_date 2026-01-15 --stock_code sh601231 --yes`
+
+- 导出完整报告到 JSON：  
+  `python3 manage_cloud_stock_signals.py export-report --report_date 2026-01-15 --stock_code sh601231 --out /tmp/report_sh601231_2026-01-15.json`
+
 ### 时间轴视图（默认页面）
 
 1. **筛选股票**：
