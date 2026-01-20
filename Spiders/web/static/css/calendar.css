@@ -1591,37 +1591,39 @@ select.control-input optgroup {
     position: absolute;
     top: 10px;
     left: 280px;
-    width: 36px;
-    height: 36px;
-    background: linear-gradient(135deg, rgba(102, 126, 234, 0.95) 0%, rgba(118, 75, 162, 0.95) 100%);
-    border: 2px solid rgba(255, 255, 255, 0.4);
-    border-radius: 50%;
+    /* 改为细长竖条，减少占用空间，看起来更像“收起/展开手柄” */
+    width: 10px;
+    height: 64px;
+    padding: 0;
+    background: linear-gradient(180deg, rgba(102, 126, 234, 0.95) 0%, rgba(118, 75, 162, 0.95) 100%);
+    border-radius: 6px;
+    border: 1px solid rgba(255, 255, 255, 0.5);
     display: flex;
     align-items: center;
     justify-content: center;
     cursor: pointer;
     z-index: 1001;
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15), 0 0 0 1px rgba(255, 255, 255, 0.1) inset;
+    box-shadow: 0 3px 10px rgba(0, 0, 0, 0.18), 0 0 0 1px rgba(255, 255, 255, 0.12) inset;
     transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
     backdrop-filter: blur(12px);
     -webkit-backdrop-filter: blur(12px);
 }
 
 .sidebar-toggle:hover {
-    transform: scale(1.08) translateY(-1px);
-    box-shadow: 0 6px 16px rgba(0, 0, 0, 0.2), 0 0 0 1px rgba(255, 255, 255, 0.2) inset;
-    background: linear-gradient(135deg, rgba(102, 126, 234, 1) 0%, rgba(118, 75, 162, 1) 100%);
+    transform: translateY(-1px);
+    box-shadow: 0 5px 14px rgba(0, 0, 0, 0.25), 0 0 0 1px rgba(255, 255, 255, 0.25) inset;
+    background: linear-gradient(180deg, rgba(102, 126, 234, 1) 0%, rgba(118, 75, 162, 1) 100%);
 }
 
 .sidebar-toggle:active {
-    transform: scale(1.0) translateY(0);
+    transform: translateY(0);
 }
 
 .sidebar-toggle .toggle-icon {
-    width: 16px;
-    height: 16px;
+    width: 14px;
+    height: 14px;
     stroke: white;
-    stroke-width: 2.8;
+    stroke-width: 2.4;
     fill: none;
     stroke-linecap: round;
     stroke-linejoin: round;
@@ -1629,7 +1631,7 @@ select.control-input optgroup {
 }
 
 .sidebar.collapsed + .main-content {
-    margin-left: 48px;
+    margin-left: 24px;
     flex: 1;
     min-width: 0;
 }
@@ -1664,7 +1666,6 @@ select.control-input optgroup {
     flex: 1;
     min-width: 0;
     overflow: visible;
-    margin-left: 48px;
     transition: margin-left 0.3s cubic-bezier(0.4, 0, 0.2, 1);
 }
 

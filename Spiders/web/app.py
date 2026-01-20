@@ -157,7 +157,7 @@ def get_calendar_events():
     date_from = request.args.get('date_from', '')
     date_to = request.args.get('date_to', '')
     query = """
-        SELECT stock_code, stock_name, insert_date, insert_price,
+        SELECT id, stock_code, stock_name, insert_date, insert_price,
                highest_price, highest_price_date, highest_change_rate, highest_days,
                lowest_price, lowest_price_date, lowest_change_rate, lowest_days,
                buy_day_change_rate, next_day_change_rate
@@ -179,21 +179,23 @@ def get_calendar_events():
     rows = cursor.fetchall()
     events = []
     for row in rows:
-        insert_date = row[2]
-        insert_price = row[3]
-        highest_price = row[4]
-        highest_price_date = row[5]
-        highest_change_rate = row[6]
-        highest_days = row[7]
-        lowest_price = row[8]
-        lowest_price_date = row[9]
-        lowest_change_rate = row[10]
-        lowest_days = row[11]
-        buy_day_change_rate = row[12] if len(row) > 12 else None
-        next_day_change_rate = row[13] if len(row) > 13 else None
+        signal_id = row[0]
+        insert_date = row[3]
+        insert_price = row[4]
+        highest_price = row[5]
+        highest_price_date = row[6]
+        highest_change_rate = row[7]
+        highest_days = row[8]
+        lowest_price = row[9]
+        lowest_price_date = row[10]
+        lowest_change_rate = row[11]
+        lowest_days = row[12]
+        buy_day_change_rate = row[13] if len(row) > 13 else None
+        next_day_change_rate = row[14] if len(row) > 14 else None
         events.append({
-            'stock_code': row[0],
-            'stock_name': row[1],
+            'id': signal_id,
+            'stock_code': row[1],
+            'stock_name': row[2],
             'insert_date': insert_date,
             'insert_price': insert_price,
             'highest_price': highest_price,
@@ -261,6 +263,52 @@ def get_filter_options():
         'stock_names': stock_names,
         'signal_types': signal_types
     })
+
+@app.route('/api/signal-daily-prices')
+def get_signal_daily_prices():
+    """获取信号的每日价格数据"""
+    signal_id = request.args.get('signal_id', type=int)
+    stock_code = request.args.get('stock_code', '')
+    insert_date = request.args.get('insert_date', '')
+    
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    if signal_id:
+        # 通过 signal_id 查询
+        cursor.execute('''
+            SELECT date, open, high, low, close, days_from_signal
+            FROM stock_signal_daily_prices
+            WHERE signal_id = ?
+            ORDER BY days_from_signal ASC
+        ''', (signal_id,))
+    elif stock_code and insert_date:
+        # 通过 stock_code 和 insert_date 查找 signal_id，然后查询价格数据
+        cursor.execute('''
+            SELECT p.date, p.open, p.high, p.low, p.close, p.days_from_signal
+            FROM stock_signal_daily_prices p
+            JOIN stock_signals s ON p.signal_id = s.id
+            WHERE s.stock_code = ? AND s.insert_date = ?
+            ORDER BY p.days_from_signal ASC
+        ''', (stock_code, insert_date))
+    else:
+        conn.close()
+        return jsonify({'error': '需要提供 signal_id 或 (stock_code + insert_date)'}), 400
+    
+    rows = cursor.fetchall()
+    prices = []
+    for row in rows:
+        prices.append({
+            'date': row[0],
+            'open': row[1],
+            'high': row[2],
+            'low': row[3],
+            'close': row[4],
+            'days_from_signal': row[5]
+        })
+    
+    conn.close()
+    return jsonify({'prices': prices})
 
 if __name__ == '__main__':
     migrate_database()

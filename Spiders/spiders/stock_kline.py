@@ -158,6 +158,39 @@ class StockKlineSpider(scrapy.Spider):
             self.cursor.execute('ALTER TABLE stock_signals ADD COLUMN next_day_change_rate REAL')
         except:
             pass
+        
+        # 创建每日价格数据表
+        self.cursor.execute('''
+            CREATE TABLE IF NOT EXISTS stock_signal_daily_prices (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                signal_id INTEGER NOT NULL,
+                stock_code TEXT NOT NULL,
+                date TEXT NOT NULL,
+                open REAL,
+                high REAL,
+                low REAL,
+                close REAL,
+                days_from_signal INTEGER NOT NULL,
+                created_at TEXT,
+                FOREIGN KEY (signal_id) REFERENCES stock_signals(id),
+                UNIQUE(signal_id, date)
+            )
+        ''')
+        
+        # 创建索引提升查询性能
+        try:
+            self.cursor.execute('CREATE INDEX IF NOT EXISTS idx_signal_daily_prices_signal_id ON stock_signal_daily_prices(signal_id)')
+        except:
+            pass
+        try:
+            self.cursor.execute('CREATE INDEX IF NOT EXISTS idx_signal_daily_prices_stock_code ON stock_signal_daily_prices(stock_code)')
+        except:
+            pass
+        try:
+            self.cursor.execute('CREATE INDEX IF NOT EXISTS idx_signal_daily_prices_date ON stock_signal_daily_prices(date)')
+        except:
+            pass
+        
         self.conn.commit()
     
     def start_requests(self):
@@ -577,6 +610,36 @@ class StockKlineSpider(scrapy.Spider):
                                         lowest_price_date = future_data['close'].idxmin().strftime("%Y-%m-%d")
                                         lowest_change_rate = round(((lowest_price - insert_price) / insert_price * 100), 2)
                                         lowest_days = (pd.to_datetime(lowest_price_date) - insert_date).days
+                                        
+                                        # 保存每日价格数据到 stock_signal_daily_prices 表
+                                        current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                                        for idx, (date, row) in enumerate(future_data.iterrows()):
+                                            days_from_signal = idx  # 0表示当天，1表示第二天，以此类推
+                                            
+                                            # 删除旧数据（如果存在），确保幂等性
+                                            self.cursor.execute('''
+                                                DELETE FROM stock_signal_daily_prices
+                                                WHERE signal_id=? AND date=?
+                                            ''', (record_id, date.strftime("%Y-%m-%d")))
+                                            
+                                            # 插入新数据
+                                            self.cursor.execute('''
+                                                INSERT INTO stock_signal_daily_prices (
+                                                    signal_id, stock_code, date, open, high, low, close,
+                                                    days_from_signal, created_at
+                                                )
+                                                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                            ''', (
+                                                record_id,
+                                                stock_code,
+                                                date.strftime("%Y-%m-%d"),
+                                                round(row.get('open', 0), 2) if pd.notna(row.get('open')) else None,
+                                                round(row.get('high', 0), 2) if pd.notna(row.get('high')) else None,
+                                                round(row.get('low', 0), 2) if pd.notna(row.get('low')) else None,
+                                                round(row.get('close', 0), 2) if pd.notna(row.get('close')) else None,
+                                                days_from_signal,
+                                                current_time
+                                            ))
                                         
                                         self.cursor.execute('''
                                             UPDATE stock_signals

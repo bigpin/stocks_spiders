@@ -45,9 +45,40 @@ function createTooltip() {
 function showTooltip(html, x, y) {
     const el = createTooltip();
     el.innerHTML = html;
-    el.style.left = x + 12 + "px";
-    el.style.top = y + 12 + "px";
     el.style.display = "block";
+
+    const padding = 12;
+    const viewportWidth = window.innerWidth || document.documentElement.clientWidth;
+    const viewportHeight = window.innerHeight || document.documentElement.clientHeight;
+
+    // 先放到大致位置再测量尺寸
+    let left = x + padding;
+    let top = y + padding;
+    el.style.left = left + "px";
+    el.style.top = top + "px";
+
+    const rect = el.getBoundingClientRect();
+
+    // 水平方向：如果超出右侧，则放到鼠标左侧
+    if (rect.right + 8 > viewportWidth) {
+        left = x - rect.width - padding;
+    }
+    // 如果仍然超出左侧，则钉在左边缘
+    if (left < 4) {
+        left = 4;
+    }
+
+    // 垂直方向：如果超出下方，则放到鼠标上方
+    if (rect.bottom + 8 > viewportHeight) {
+        top = y - rect.height - padding;
+    }
+    // 如果仍然超出上方，则钉在上边缘
+    if (top < 4) {
+        top = 4;
+    }
+
+    el.style.left = left + "px";
+    el.style.top = top + "px";
 }
 function hideTooltip() {
     if (tooltipEl) {
@@ -264,34 +295,97 @@ function bindElemEvents(el, rec, kind) {
 }
 function calculateProfitForStock(rec, profitTarget, stopLoss) {
     if (!rec.buyPrice) return null;
+    
     const buyPrice = rec.buyPrice;
-    const highPrice = rec.highPrice;
-    const lowPrice = rec.lowPrice;
-    const highDays = rec.highDays || 999999;
-    const lowDays = rec.lowDays || 999999;
     const profitPrice = buyPrice * (1 + profitTarget / 100);
     const lossPrice = buyPrice * (1 + stopLoss / 100);
-    const canReachProfit = highPrice && highPrice >= profitPrice;
-    const canReachLoss = lowPrice && lowPrice <= lossPrice;
-    if (!canReachProfit && !canReachLoss) {
+    
+    // 如果有每日价格数据，使用每日价格数据计算（更准确）
+    if (rec.dailyPrices && rec.dailyPrices.length > 0) {
+        for (let i = 0; i < rec.dailyPrices.length; i++) {
+            const dayData = rec.dailyPrices[i];
+            const high = dayData.high;
+            const low = dayData.low;
+            
+            // 检查是否触及止盈
+            const hitProfit = high && high >= profitPrice;
+            // 检查是否触及止损
+            const hitLoss = low && low <= lossPrice;
+            
+            if (hitProfit && hitLoss) {
+                // 如果同一天都触及，需要判断哪个先触发
+                const openPrice = dayData.open || buyPrice;
+                
+                // 1. 优先检查开盘价是否直接触发
+                if (openPrice <= lossPrice) {
+                    // 开盘价 <= 止损价，开盘就触发止损（即使后面涨到止盈价）
+                    return { profit: stopLoss, days: dayData.days_from_signal, type: "loss" };
+                }
+                if (openPrice >= profitPrice) {
+                    // 开盘价 >= 止盈价，开盘就触发止盈（即使后面跌到止损价）
+                    return { profit: profitTarget, days: dayData.days_from_signal, type: "profit" };
+                }
+                
+                // 2. 开盘价在中间（止损价 < 开盘价 < 止盈价），判断盘中先触及哪个
+                // 使用相对距离判断（更合理）
+                const profitRange = profitPrice - buyPrice;  // 止盈幅度
+                const lossRange = buyPrice - lossPrice;      // 止损幅度
+                
+                // 计算距离止盈和止损的相对比例
+                const profitDistanceRatio = (profitPrice - openPrice) / profitRange;  // 距离止盈的比例（0-1）
+                const lossDistanceRatio = (openPrice - lossPrice) / lossRange;       // 距离止损的比例（0-1）
+                
+                // 距离比例更小的先触发（更接近目标）
+                if (profitDistanceRatio <= lossDistanceRatio) {
+                    // 更接近止盈价，先触发止盈
+                    return { profit: profitTarget, days: dayData.days_from_signal, type: "profit" };
+                } else {
+                    // 更接近止损价，先触发止损
+                    return { profit: stopLoss, days: dayData.days_from_signal, type: "loss" };
+                }
+            } else if (hitProfit) {
+                // 只触及止盈
+                return { profit: profitTarget, days: dayData.days_from_signal, type: "profit" };
+            } else if (hitLoss) {
+                // 只触及止损
+                return { profit: stopLoss, days: dayData.days_from_signal, type: "loss" };
+            }
+        }
+        // 如果遍历完所有天数都没有触及，返回null
+        return null;
+    } else {
+        // 如果没有每日价格数据，使用旧逻辑（向后兼容）
+        const highPrice = rec.highPrice;
+        const lowPrice = rec.lowPrice;
+        const highDays = rec.highDays || 999999;
+        const lowDays = rec.lowDays || 999999;
+        
+        const canReachProfit = highPrice && highPrice >= profitPrice;
+        const canReachLoss = lowPrice && lowPrice <= lossPrice;
+        
+        if (!canReachProfit && !canReachLoss) {
+            return null;
+        }
+        
+        let firstHit = null;
+        let firstHitDays = 999999;
+        
+        if (canReachProfit && highDays < firstHitDays) {
+            firstHit = "profit";
+            firstHitDays = highDays;
+        }
+        if (canReachLoss && lowDays < firstHitDays) {
+            firstHit = "loss";
+            firstHitDays = lowDays;
+        }
+        
+        if (firstHit === "profit") {
+            return { profit: profitTarget, days: firstHitDays, type: "profit" };
+        } else if (firstHit === "loss") {
+            return { profit: stopLoss, days: firstHitDays, type: "loss" };
+        }
         return null;
     }
-    let firstHit = null;
-    let firstHitDays = 999999;
-    if (canReachProfit && highDays < firstHitDays) {
-        firstHit = "profit";
-        firstHitDays = highDays;
-    }
-    if (canReachLoss && lowDays < firstHitDays) {
-        firstHit = "loss";
-        firstHitDays = lowDays;
-    }
-    if (firstHit === "profit") {
-        return { profit: profitTarget, days: firstHitDays, type: "profit" };
-    } else if (firstHit === "loss") {
-        return { profit: stopLoss, days: firstHitDays, type: "loss" };
-    }
-    return null;
 }
 function getFilteredRecords() {
     const dateRangeInput = document.getElementById("filter-date-range").value;
@@ -922,6 +1016,60 @@ async function loadStockCodes() {
         console.error("Failed to load stock codes:", error);
     }
 }
+async function loadDailyPricesForEvents(events) {
+    // 为事件列表批量加载每日价格数据
+    if (!events || events.length === 0) return;
+    
+    // 分批加载，每批50个，避免一次性请求太多数据
+    const batchSize = 50;
+    const dailyPricesMap = {};
+    
+    for (let i = 0; i < events.length; i += batchSize) {
+        const batch = events.slice(i, i + batchSize);
+        const promises = batch.map(async (event) => {
+            try {
+                const params = new URLSearchParams();
+                // 优先使用 signal_id，如果没有则使用 stock_code + insert_date
+                if (event.id) {
+                    params.append("signal_id", event.id);
+                } else {
+                    params.append("stock_code", event.stock_code);
+                    params.append("insert_date", event.insert_date);
+                }
+                
+                const res = await fetch("/api/signal-daily-prices?" + params.toString());
+                const data = await res.json();
+                
+                if (data.prices && data.prices.length > 0) {
+                    const key = event.id ? `id_${event.id}` : `${event.stock_code}_${event.insert_date}`;
+                    return {
+                        key: key,
+                        prices: data.prices
+                    };
+                }
+                return null;
+            } catch (error) {
+                console.error(`Failed to load daily prices for ${event.stock_code}:`, error);
+                return null;
+            }
+        });
+        
+        const results = await Promise.all(promises);
+        results.forEach(result => {
+            if (result) {
+                dailyPricesMap[result.key] = result.prices;
+            }
+        });
+    }
+    
+    // 将每日价格数据附加到事件对象
+    events.forEach(event => {
+        const key = event.id ? `id_${event.id}` : `${event.stock_code}_${event.insert_date}`;
+        if (dailyPricesMap[key]) {
+            event.dailyPrices = dailyPricesMap[key];
+        }
+    });
+}
 async function reloadTimeline() {
     const stockCode = document.getElementById("filter-stock-code").value;
     const dateFrom = document.getElementById("filter-date-from").value;
@@ -933,6 +1081,10 @@ async function reloadTimeline() {
     const res = await fetch("/api/calendar/events?" + params.toString());
     const data = await res.json();
     const events = data.events || [];
+    
+    // 批量加载每日价格数据
+    await loadDailyPricesForEvents(events);
+    
     records = [];
     const priceMinInput = document.getElementById("filter-timeline-price-min").value;
     const priceMaxInput = document.getElementById("filter-timeline-price-max").value;
@@ -980,7 +1132,8 @@ async function reloadTimeline() {
             lowChange: e.lowest_change_rate != null ? Number(e.lowest_change_rate) : null,
             lowDays: e.lowest_days != null ? Number(e.lowest_days) : null,
             buyDayChangeRate: e.buy_day_change_rate != null ? Number(e.buy_day_change_rate) : null,
-            nextDayChangeRate: e.next_day_change_rate != null ? Number(e.next_day_change_rate) : null
+            nextDayChangeRate: e.next_day_change_rate != null ? Number(e.next_day_change_rate) : null,
+            dailyPrices: e.dailyPrices || null  // 每日价格数据
         };
         records.push(rec);
     });
@@ -1114,7 +1267,8 @@ function initSidebarToggle() {
     // 更新main-content的左边距
     const mainContent = document.querySelector('.main-content');
     if (mainContent) {
-        mainContent.style.marginLeft = isCollapsed ? '48px' : '48px';
+        // 展开和收起时，主区域左侧留相同的间距（24px），减少按钮右侧空隙
+        mainContent.style.marginLeft = '5px';
     }
     
     toggleBtn.addEventListener('click', function(e) {
@@ -1126,12 +1280,12 @@ function initSidebarToggle() {
             sidebar.classList.remove('collapsed');
             toggleBtn.style.left = '280px';
             toggleBtn.querySelector('.toggle-icon').style.transform = 'rotate(0deg)';
-            if (mainContent) mainContent.style.marginLeft = '48px';
+            if (mainContent) mainContent.style.marginLeft = '24px';
         } else {
             sidebar.classList.add('collapsed');
             toggleBtn.style.left = '8px';
             toggleBtn.querySelector('.toggle-icon').style.transform = 'rotate(180deg)';
-            if (mainContent) mainContent.style.marginLeft = '48px';
+            if (mainContent) mainContent.style.marginLeft = '24px';
         }
         
         // 保存状态到localStorage

@@ -200,7 +200,7 @@ if __name__ == "__main__":
     # run_stock_kline_spider_with_yesterday(STOCK_CODES)
     # 运行获取不带技术指标K线数据的爬虫
     # run_stock_kline_spider_without_indicators()
-    
+
     # 爬虫运行完成后，上传当天的信号分析报告到云数据库
     # 使用 try-finally 确保上传逻辑一定会执行
     log_to_file(log_file, "[STEP 3] 开始上传信号分析报告到云数据库...")
