@@ -6,6 +6,7 @@ from datetime import datetime, timedelta
 import os
 import sys
 import subprocess
+import argparse
 
 def run_stock_list_spider():
     """获取股票列表"""
@@ -19,9 +20,29 @@ def run_stock_detail_spider(stock_codes='sh603288,sz000858'):
     """爬取指定股票的详细信息"""
     cmdline.execute(f'scrapy crawl stock_detail -a stock_codes={stock_codes}'.split())
 
-def run_stock_kline_spider_with_indicators(stock_codes):
-    """获取带技术指标的K线数据"""
-    cmdline.execute(f'scrapy crawl stock_kline -a use_file=true -a stock_codes={stock_codes} -a calc_indicators=true'.split())
+def run_stock_kline_spider_with_indicators(stock_codes, target_date=None):
+    """
+    获取带技术指标的K线数据
+    
+    Args:
+        stock_codes: 股票代码
+        target_date: 目标日期，格式 YYYYMMDD，如果为None则使用今天
+    """
+    if target_date:
+        # 指定日期时使用 CrawlerProcess
+        settings = get_project_settings()
+        settings.set('REQUEST_FINGERPRINTER_IMPLEMENTATION', '2.7')
+        process = CrawlerProcess(settings)
+        process.crawl('stock_kline', 
+                     use_file='true',
+                     stock_codes=stock_codes,
+                     start_date=target_date,
+                     end_date=target_date,
+                     calc_indicators='true')
+        process.start()
+    else:
+        # 默认今天，使用 cmdline
+        cmdline.execute(f'scrapy crawl stock_kline -a use_file=true -a stock_codes={stock_codes} -a calc_indicators=true'.split())
 
 # def run_stock_kline_spider_with_yesterday(stock_codes):
 #     """获取昨天的K线数据"""
@@ -29,18 +50,9 @@ def run_stock_kline_spider_with_indicators(stock_codes):
 #     cmdline.execute(f'scrapy crawl stock_kline -a use_file=true -a stock_codes={stock_codes} -a start_date={yesterday} -a end_date={yesterday} -a calc_indicators=true'.split())
 
 def run_stock_kline_spider_with_yesterday(stock_codes):
-    """获取昨天的K线数据"""
+    """获取昨天的K线数据（已废弃，请使用 run_stock_kline_spider_with_indicators 并指定日期）"""
     yesterday = (datetime.now() - timedelta(days=1)).strftime('%Y%m%d')
-    settings = get_project_settings()
-    settings.set('REQUEST_FINGERPRINTER_IMPLEMENTATION', '2.7')
-    process = CrawlerProcess(settings)
-    process.crawl('stock_kline', 
-                 use_file='true',
-                 stock_codes=stock_codes,
-                 start_date=yesterday,
-                 end_date=yesterday,
-                 calc_indicators='true')
-    process.start()
+    run_stock_kline_spider_with_indicators(stock_codes, target_date=yesterday)
     
 def run_stock_kline_spider_without_indicators(stock_codes='sh603288'):
     """获取不带技术指标的K线数据"""
@@ -153,7 +165,64 @@ def log_to_file(log_file, message, also_print=True):
     if also_print:
         print(message)
 
+def validate_date(date_str):
+    """
+    验证日期字符串格式
+    
+    Args:
+        date_str: 日期字符串，格式应为 YYYYMMDD
+        
+    Returns:
+        tuple: (is_valid, error_message)
+    """
+    if not date_str:
+        return False, "日期字符串不能为空"
+    
+    if len(date_str) != 8:
+        return False, f"日期格式错误：应为 YYYYMMDD 格式（8位数字），实际为 {len(date_str)} 位"
+    
+    if not date_str.isdigit():
+        return False, f"日期格式错误：应全部为数字，实际为: {date_str}"
+    
+    try:
+        year = int(date_str[:4])
+        month = int(date_str[4:6])
+        day = int(date_str[6:8])
+        
+        # 验证日期是否有效
+        datetime(year, month, day)
+        
+        return True, None
+    except ValueError as e:
+        return False, f"日期无效：{e}"
+
 if __name__ == "__main__":
+    # 解析命令行参数
+    parser = argparse.ArgumentParser(description='股票数据爬虫脚本')
+    parser.add_argument('--date', type=str, help='指定运行日期，格式：YYYYMMDD（例如：20240101）。如果不指定，默认运行今天的数据')
+    parser.add_argument('--yesterday', action='store_true', help='运行昨天的数据（与 --date 参数互斥，如果同时指定，--date 优先）')
+    args = parser.parse_args()
+    
+    # 根据参数确定运行日期
+    date_specified = False  # 标记是否明确指定了日期
+    if args.date:
+        # 验证日期格式
+        is_valid, error_msg = validate_date(args.date)
+        if not is_valid:
+            print(f"错误: {error_msg}", file=sys.stderr)
+            sys.exit(1)
+        target_date = args.date
+        date_desc = f"指定日期 ({target_date})"
+        date_specified = True
+    elif args.yesterday:
+        target_date = (datetime.now() - timedelta(days=1)).strftime('%Y%m%d')
+        date_desc = "昨天"
+        date_specified = True
+    else:
+        target_date = datetime.now().strftime('%Y%m%d')
+        date_desc = "今天"
+        date_specified = False
+    
     # 清空日志文件（如果存在），实现每次启动覆盖
     log_file = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'logs', 'spiders.log')
     log_dir = os.path.dirname(log_file)
@@ -169,12 +238,13 @@ if __name__ == "__main__":
             f.write(f"=== 爬虫任务启动 - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} ===\n")
             f.write(f"工作目录: {os.getcwd()}\n")
             f.write(f"Python路径: {sys.executable}\n")
+            f.write(f"运行模式: {date_desc}的数据 ({target_date})\n")
             f.write("=" * 80 + "\n\n")
     except Exception as e:
         # 如果无法写入日志文件，输出到stderr
         print(f"警告: 无法清空日志文件 {log_file}: {e}", file=sys.stderr)
     
-    log_to_file(log_file, "[STEP 1] 日志文件初始化完成")
+    log_to_file(log_file, f"[STEP 1] 日志文件初始化完成，运行模式: {date_desc}的数据 ({target_date})")
     
     # 运行获取股票列表的爬虫
     # run_stock_list_spider()
@@ -183,9 +253,13 @@ if __name__ == "__main__":
     # run_stock_detail_spider()
     
     # 运行获取带技术指标K线数据的爬虫
-    log_to_file(log_file, f"[STEP 2] 开始执行爬虫任务，股票代码数量: {len(STOCK_CODES.split(',')) if isinstance(STOCK_CODES, str) else len([c for c in STOCK_CODES.split(',') if c.strip()])}")
+    log_to_file(log_file, f"[STEP 2] 开始执行爬虫任务，股票代码数量: {len(STOCK_CODES.split(',')) if isinstance(STOCK_CODES, str) else len([c for c in STOCK_CODES.split(',') if c.strip()])}，日期: {target_date}")
     try:
-        run_stock_kline_spider_with_indicators(STOCK_CODES)
+        # 如果明确指定了日期参数，传入日期参数；否则使用默认（今天）
+        if date_specified:
+            run_stock_kline_spider_with_indicators(STOCK_CODES, target_date=target_date)
+        else:
+            run_stock_kline_spider_with_indicators(STOCK_CODES)
         log_to_file(log_file, "[STEP 2] 爬虫任务执行完成（正常退出）")
     except SystemExit as e:
         # cmdline.execute 可能会调用 sys.exit()，这是正常的
@@ -197,29 +271,25 @@ if __name__ == "__main__":
         log_to_file(log_file, f"[STEP 2] [ERROR] 错误详情:\n{error_trace}", also_print=False)
         print(f"[ERROR] 爬虫任务执行出错: {e}", file=sys.stderr)
         traceback.print_exc()
-    # run_stock_kline_spider_with_yesterday(STOCK_CODES)
     # 运行获取不带技术指标K线数据的爬虫
     # run_stock_kline_spider_without_indicators()
 
-    # 爬虫运行完成后，上传当天的信号分析报告到云数据库
+    # 爬虫运行完成后，上传信号分析报告到云数据库
     # 使用 try-finally 确保上传逻辑一定会执行
-    log_to_file(log_file, "[STEP 3] 开始上传信号分析报告到云数据库...")
+    log_to_file(log_file, f"[STEP 3] 开始上传{date_desc}的信号分析报告到云数据库...")
     try:
         log_to_file(log_file, "=" * 80)
-        log_to_file(log_file, "开始上传信号分析报告到云数据库...")
+        log_to_file(log_file, f"开始上传{date_desc}的信号分析报告到云数据库...")
         log_to_file(log_file, "=" * 80)
         
-        # 获取爬虫使用的日期（如果有 end_date 参数，使用该日期；否则使用当天）
-        # 由于爬虫可能使用 end_date，我们需要从爬虫逻辑中获取，这里先使用当天日期
-        # 如果爬虫使用了 end_date，可以在调用时传入
-        report_date = datetime.now().strftime('%Y%m%d')
-        log_to_file(log_file, f"[STEP 3] 准备上传报告日期: {report_date}")
-        upload_success = upload_daily_report_to_cloudbase(report_date, log_file=log_file)
+        # 使用目标日期上传报告
+        log_to_file(log_file, f"[STEP 3] 准备上传报告日期: {target_date}")
+        upload_success = upload_daily_report_to_cloudbase(target_date, log_file=log_file)
         
         if upload_success:
-            log_to_file(log_file, "[STEP 3] [OK] 信号分析报告上传完成")
+            log_to_file(log_file, f"[STEP 3] [OK] {date_desc}的信号分析报告上传完成")
         else:
-            log_to_file(log_file, "[STEP 3] [WARNING] 信号分析报告上传失败，请检查日志")
+            log_to_file(log_file, f"[STEP 3] [WARNING] {date_desc}的信号分析报告上传失败，请检查日志")
         
         log_to_file(log_file, "=" * 80)
         log_to_file(log_file, "[STEP 4] 所有任务执行完成")
