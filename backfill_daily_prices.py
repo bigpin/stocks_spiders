@@ -115,32 +115,38 @@ def backfill_daily_prices_for_signal(signal_id, stock_code, stock_name, insert_d
         if isinstance(insert_date, str):
             insert_date = pd.to_datetime(insert_date)
         
-        # 找到insert_date当天或之后的第一天
+        # 找到insert_date当天或之后的第一天（交易日）
         future_dates = df.index[df.index >= insert_date]
         if len(future_dates) == 0:
-            return False, f"没有找到insert_date之后的数据"
+            return False, f"没有找到insert_date ({insert_date.strftime('%Y-%m-%d')}) 之后的数据"
         
         nearest_date = future_dates[0]
         created_idx = df.index.get_loc(nearest_date)
         
-        # 获取从nearest_date当天到后续30天的数据
-        future_data = df.iloc[created_idx:created_idx + 31]
+        # 获取从nearest_date当天开始，后续30天的数据（共31天：当天+后30天）
+        # 限制最多30个交易日的数据
+        end_idx = min(created_idx + 31, len(df))
+        future_data = df.iloc[created_idx:end_idx]
         
         if future_data.empty:
             return False, "没有未来数据"
         
-        # 确保close列中没有None值
+        # 确保close列中没有None值（过滤掉无效数据）
         future_data = future_data[future_data['close'].notna()]
         
         if future_data.empty:
             return False, "没有有效的收盘价数据"
+        
+        # 限制为最多30天的数据
+        if len(future_data) > 30:
+            future_data = future_data.iloc[:30]
         
         # 保存每日价格数据
         saved_count = 0
         current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         
         for idx, (date, row) in enumerate(future_data.iterrows()):
-            days_from_signal = idx
+            days_from_signal = idx  # 从0开始，0表示信号当天
             
             # 删除旧数据（如果存在）
             cursor.execute('''
@@ -169,7 +175,7 @@ def backfill_daily_prices_for_signal(signal_id, stock_code, stock_name, insert_d
             saved_count += 1
         
         conn.commit()
-        return True, f"保存了 {saved_count} 天的价格数据"
+        return True, f"保存了 {saved_count} 天的价格数据（信号日期后30天内）"
         
     except Exception as e:
         conn.rollback()
@@ -370,34 +376,28 @@ def main():
             print(f"\n[{idx}/{total_stocks}] 处理股票: {stock_code} ({stock_signals[0]['stock_name']})")
             print(f"  需要处理 {len(stock_signals)} 个信号")
             
-            # 获取该股票的最早和最新信号日期
+            # 获取该股票的所有信号日期
             dates = [s['insert_date'] for s in stock_signals]
             min_date = min(dates)
             max_date = max(dates)
             
             # 计算需要获取的日期范围
-            # 策略：获取足够的历史数据（从最早信号前60天到最新信号后30天，但不超过今天）
-            # 这样可以确保有足够的数据来处理所有信号
+            # 策略：获取从最早信号当天到最新信号后30天的数据，但不超过今天
+            # 每只股票只获取一次K线数据，然后为所有信号提取各自需要的30天数据
             today = datetime.now().date()
             min_date_dt = pd.to_datetime(min_date).date()
             max_date_dt = pd.to_datetime(max_date).date()
             
-            # 开始日期：最早信号前60天（确保有足够历史数据）
-            start_date_dt = min_date_dt - timedelta(days=60)
+            # 开始日期：最早信号当天（不需要历史数据，只需要从信号日期开始）
+            start_date_dt = min_date_dt
             # 结束日期：最新信号+30天，但不超过今天
             end_date_dt = min(max_date_dt + timedelta(days=30), today)
-            
-            # 如果日期范围太小（小于30天），扩大范围以确保有足够数据
-            date_range_days = (end_date_dt - start_date_dt).days
-            if date_range_days < 30:
-                # 扩大范围，确保至少有60天的数据
-                days_needed = 60 - date_range_days
-                start_date_dt = start_date_dt - timedelta(days=days_needed)
             
             start_date = start_date_dt.strftime("%Y-%m-%d")
             end_date = end_date_dt.strftime("%Y-%m-%d")
             
             print(f"  需要K线数据范围: {start_date} 到 {end_date} (今天: {today.strftime('%Y-%m-%d')}, 范围: {(end_date_dt - start_date_dt).days}天)")
+            print(f"  说明: 每只股票只获取一次K线数据，然后为每个信号提取其后30天的价格数据")
             
             # 获取K线数据（第一个股票使用verbose模式，便于调试）
             verbose = (idx == 1)
@@ -421,9 +421,9 @@ def main():
                 time.sleep(args.delay)
                 continue
             
-            print(f"  ✓ 获取到 {len(df)} 天的K线数据")
+            print(f"  ✓ 获取到 {len(df)} 天的K线数据（所有信号共享此数据）")
             
-            # 处理每个信号
+            # 处理每个信号：从共享的K线数据中提取该信号日期后30天的数据
             signal_success = 0
             signal_failed = 0
             for signal in stock_signals:
@@ -437,11 +437,11 @@ def main():
                 )
                 
                 if success:
-                    print(f"    ✓ 信号ID {signal['id']}: {message}")
+                    print(f"    ✓ 信号ID {signal['id']} ({signal['insert_date']}): {message}")
                     signal_success += 1
                     total_processed += 1
                 else:
-                    print(f"    ✗ 信号ID {signal['id']}: {message}")
+                    print(f"    ✗ 信号ID {signal['id']} ({signal['insert_date']}): {message}")
                     signal_failed += 1
                     total_failed += 1
             
