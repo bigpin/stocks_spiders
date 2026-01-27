@@ -19,21 +19,15 @@ USER_AGENT = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.
 ROBOTSTXT_OBEY = False
 
 # Configure maximum concurrent requests performed by Scrapy (default: 16)
-CONCURRENT_REQUESTS = 8  # 减少并发请求数，避免连接丢失
+CONCURRENT_REQUESTS = 16
 
 # Configure a delay for requests for the same website (default: 0)
 # See https://docs.scrapy.org/en/latest/topics/settings.html#download-delay
 # See also autothrottle settings and docs
-DOWNLOAD_DELAY = 2  # 增加延迟到2秒，避免请求过快
-RANDOMIZE_DOWNLOAD_DELAY = True
+DOWNLOAD_DELAY = 1
 # The download delay setting will honor only one of:
-CONCURRENT_REQUESTS_PER_DOMAIN = 4  # 限制每个域名的并发请求数
+# CONCURRENT_REQUESTS_PER_DOMAIN = 32
 # CONCURRENT_REQUESTS_PER_IP = 32
-
-# 重试设置
-RETRY_ENABLED = True
-RETRY_TIMES = 5  # 最多重试5次
-RETRY_HTTP_CODES = [500, 502, 503, 504, 408, 429]  # 需要重试的HTTP状态码
 
 # Disable cookies (enabled by default)
 #COOKIES_ENABLED = False
@@ -57,11 +51,10 @@ SPIDER_MIDDLEWARES = {
 # Enable or disable downloader middlewares
 # See https://docs.scrapy.org/en/latest/topics/downloader-middleware.html
 DOWNLOADER_MIDDLEWARES = {
-    "Spiders.middlewares.SpidersDownloaderMiddleware": 543,  # 启用自定义中间件处理连接错误
+    # "Spiders.middlewares.SpidersDownloaderMiddleware": 543,
     'scrapy_splash.SplashCookiesMiddleware': 723,
     'scrapy_splash.SplashMiddleware': 725,
     'scrapy.downloadermiddlewares.httpcompression.HttpCompressionMiddleware': 810,
-    'scrapy.downloadermiddlewares.retry.RetryMiddleware': 90,  # 启用重试中间件
 }
 
 # Enable or disable extensions

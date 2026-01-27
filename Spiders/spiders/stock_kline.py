@@ -194,7 +194,6 @@ class StockKlineSpider(scrapy.Spider):
         self.conn.commit()
     
     def start_requests(self):
-        import time
         count = 0
         for stock_code in self.stock_codes:
             count += 1
@@ -222,25 +221,12 @@ class StockKlineSpider(scrapy.Spider):
             
             url = f"{KLINE_API['base_url']}?" + "&".join([f"{k}={v}" for k, v in params.items()])
             
-            # 每10个请求后增加额外延迟，避免请求过快导致连接丢失
-            if count > 1 and count % 10 == 0:
-                delay = 3  # 每10个请求后延迟3秒
-                self.logger.info(f"已处理{count}个请求，延迟{delay}秒以避免连接丢失...")
-                time.sleep(delay)
-            
             yield scrapy.Request(
                 url,
                 callback=self.parse,
-                meta={'stock_code': stock_code, 'retry_times': 0},
-                headers=HEADERS,
-                dont_filter=False,
-                errback=self.errback_httpbin
+                meta={'stock_code': stock_code},
+                headers=HEADERS
             )
-    
-    def errback_httpbin(self, failure):
-        """处理请求失败的回调"""
-        request = failure.request
-        self.logger.error(f'请求失败: {request.url}, 错误: {failure.value}')
     
     def write_to_signal_file(self, content):
         """将内容写入信号文件"""

@@ -97,15 +97,12 @@ class SpidersDownloaderMiddleware:
         # - return None: continue processing this exception
         # - return a Response object: stops process_exception() chain
         # - return a Request object: stops process_exception() chain
-        from twisted.internet.error import ConnectionDone, ConnectionLost, TimeoutError
+        from twisted.internet.error import ConnectionDone
         from twisted.conch.telnet import AlreadyNegotiating
 
-        # 处理各种连接错误，重新调度请求
-        # Scrapy的RetryMiddleware会自动处理重试逻辑和延迟
-        if isinstance(exception, (ConnectionDone, ConnectionLost, TimeoutError, AlreadyNegotiating)):
-            retry_times = request.meta.get('retry_times', 0)
-            spider.logger.warning(f'连接错误 ({exception.__class__.__name__})，将重试请求 {request.url} (当前重试次数: {retry_times})')
-            # 返回request对象会触发Scrapy的重试机制
+        if isinstance(exception, (ConnectionDone, AlreadyNegotiating)):
+            # 对于连接完成或协商错误，重新调度请求
+            spider.logger.info(f'重试请求 {request.url} 由于 {exception.__class__.__name__}')
             return request
 
         return None
