@@ -8,8 +8,10 @@ from .stock_config import (
     KLINE_FIELD_MAPPING,
     STOCK_PREFIX_MAP,
     HEADERS,
-    INDICATORS_CONFIG
+    INDICATORS_CONFIG,
+    DATA_SOURCE
 )
+from .baostock_helper import fetch_kline_data_baostock_simple, get_stock_name_baostock
 from .technical_indicators import TechnicalIndicators
 import sqlite3
 
@@ -200,33 +202,66 @@ class StockKlineSpider(scrapy.Spider):
             #if count > 100: # 限制请求数量
             #    break
             self.logger.warning(f"开始请求第{count}个股票 {stock_code} 的数据")
-            # 获取股票代码前缀对应的数字
-            prefix = STOCK_PREFIX_MAP.get(stock_code[:2])
-            if not prefix:
-                self.logger.error(f"不支持的股票代码前缀: {stock_code}")
-                continue
             
-            # 构建API请求参数
-            params = {
-                'secid': f"{prefix}.{stock_code[2:]}",
-                'fields1': 'f1,f2,f3,f4,f5,f6,f7,f8,f9,f10,f11,f12,f13',
-                'fields2': 'f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61',
-                'klt': KLINE_API['klt'][self.kline_type],
-                'fqt': KLINE_API['fqt'][self.fq_type],
-                'ut': KLINE_API['ut'],
-                'beg': self.start_date or '',
-                'end': self.end_date or '',
-                'lmt': '1000'  # 限制返回1000条数据
-            }
-            
-            url = f"{KLINE_API['base_url']}?" + "&".join([f"{k}={v}" for k, v in params.items()])
-            
-            yield scrapy.Request(
-                url,
-                callback=self.parse,
-                meta={'stock_code': stock_code},
-                headers=HEADERS
-            )
+            # 根据数据源配置选择不同的获取方式
+            if DATA_SOURCE == 'baostock':
+                # 使用baostock直接获取数据
+                df = fetch_kline_data_baostock_simple(
+                    stock_code=stock_code,
+                    start_date=self.start_date,
+                    end_date=self.end_date,
+                    verbose=False
+                )
+                
+                if df is not None and not df.empty:
+                    # 在主程序中打印部分请求回来的原始数据，便于检查
+                    try:
+                        self.logger.info(
+                            f"[baostock] {stock_code} 获取到 {len(df)} 条K线数据，列: {list(df.columns)}"
+                        )
+                        # 只打印前几行，避免日志过大
+                        preview_rows = min(5, len(df))
+                        self.logger.info(
+                            f"[baostock] {stock_code} 数据预览(前{preview_rows}行):\n"
+                            f"{df.head(preview_rows).to_string()}"
+                        )
+                    except Exception as e:
+                        self.logger.error(f"[baostock] 打印 {stock_code} 数据预览失败: {e}")
+
+                    # 获取股票名称
+                    stock_name = get_stock_name_baostock(stock_code) or stock_code
+                    # 直接处理数据，不使用Scrapy的Request机制
+                    self.process_kline_data(stock_code, stock_name, df)
+                else:
+                    self.logger.error(f"无法获取 {stock_code} 的K线数据")
+            else:
+                # 使用原有的东方财富API（Scrapy Request机制）
+                prefix = STOCK_PREFIX_MAP.get(stock_code[:2])
+                if not prefix:
+                    self.logger.error(f"不支持的股票代码前缀: {stock_code}")
+                    continue
+                
+                # 构建API请求参数
+                params = {
+                    'secid': f"{prefix}.{stock_code[2:]}",
+                    'fields1': 'f1,f2,f3,f4,f5,f6,f7,f8,f9,f10,f11,f12,f13',
+                    'fields2': 'f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61',
+                    'klt': KLINE_API['klt'][self.kline_type],
+                    'fqt': KLINE_API['fqt'][self.fq_type],
+                    'ut': KLINE_API['ut'],
+                    'beg': self.start_date or '',
+                    'end': self.end_date or '',
+                    'lmt': '1000'  # 限制返回1000条数据
+                }
+                
+                url = f"{KLINE_API['base_url']}?" + "&".join([f"{k}={v}" for k, v in params.items()])
+                
+                yield scrapy.Request(
+                    url,
+                    callback=self.parse,
+                    meta={'stock_code': stock_code},
+                    headers=HEADERS
+                )
     
     def write_to_signal_file(self, content):
         """将内容写入信号文件"""
@@ -316,6 +351,404 @@ class StockKlineSpider(scrapy.Spider):
         except Exception as e:
             self.logger.error(f"▲ 保存到数据库时出错: {str(e)}")
             self.conn.rollback()  # 发生错误时回滚事务
+    
+    def parse(self, response):
+        try:
+            data = json.loads(response.text)
+            if data.get('data') and data['data'].get('klines'):
+                stock_code = response.meta['stock_code']
+                klines = data['data']['klines']
+                                
+                # 检查数据量是否足够
+                if len(klines) < 16:
+                    self.logger.warning(f"票 {stock_code} 的数据量不足16天，跳过分析")
+                    return
+                
+                # 将K线数据转换为DataFrame
+                kline_data = []
+                for kline in klines:
+                    values = kline.split(',')
+                    item = {}
+                    for i, value in enumerate(values):
+                        field = KLINE_FIELD_MAPPING.get(i)
+                        if field:
+                            if field != 'date':
+                                try:
+                                    item[field] = float(value)
+                                except ValueError:
+                                    item[field] = None
+                            else:
+                                item[field] = value
+                    kline_data.append(item)
+                
+                # 创建DataFrame
+                df = pd.DataFrame(kline_data)
+                df.set_index('date', inplace=True)
+                
+                last_close_price = df.iloc[-1]['close']  # 最近的收盘价
+                self.logger.info(f"最近一天的日期: {df.iloc[-1].name}, 收盘价: {last_close_price}")
+
+                # 算技术指标
+                if self.calc_indicators:
+                    df = TechnicalIndicators.calculate_all(df, INDICATORS_CONFIG)
+                    
+                    # 分析信号
+                    kdj_analysis = self.analyze_signals(df)
+                    
+                    # 只要有满足条件的信号写入文件
+                    if kdj_analysis['recent_signals']:
+                        # 统计信号种类和数量
+                        signal_type_count = {}
+                        for signal in kdj_analysis['recent_signals']:
+                            signal_type = signal['signal']
+                            signal_type_count[signal_type] = signal_type_count.get(signal_type, 0) + 1
+                        
+                        # 有当出现六种以上不同信号时才输出
+                        if len(signal_type_count) > 5:
+                            # 写入文件
+                            self.write_to_signal_file(f"\n股票 {data['data']['name']}({stock_code}) 股票信号分析结果")
+                            self.write_to_signal_file(f"总体成功率: {kdj_analysis['overall_success_rate']:.2f}%")
+                            self.write_to_signal_file(f"总信号数: {kdj_analysis['total_signals']}")
+                            self.write_to_signal_file(f"总成功数: {kdj_analysis['total_success']}")
+                            
+                            # 输出最近信号
+                            self.write_to_signal_file("\n最近3天出现的高胜率信号：")
+                            self.write_to_signal_file(f"共有{len(kdj_analysis['recent_signals'])}个信号，{len(signal_type_count)}种类型：")
+                            # 输出每种信号的数量
+                            for signal_type, count in signal_type_count.items():
+                                self.write_to_signal_file(f"- {signal_type}: {count}个")
+                            
+                            # 批量处理数据库插入
+                            signals_to_insert = []
+                            for signal in kdj_analysis['recent_signals']:
+                                signals_to_insert.append((
+                                    stock_code,
+                                    data['data']['name'],
+                                    signal['date'].strftime("%Y-%m-%d"),
+                                    signal['signal'],
+                                    round(signal['signal_success_rate'], 2),
+                                    round(signal['close'], 2),
+                                    self.current_time
+                                ))
+
+                            if signals_to_insert:
+                                # 使用executemany一次性插入多条记录（带唯一约束与 OR IGNORE，重复不会插入）
+                                self.cursor.executemany('''
+                                    INSERT OR IGNORE INTO stock_data (
+                                        stock_code, stock_name, date, signal, 
+                                        success_rate, initial_price, created_at
+                                    )
+                                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                                ''', signals_to_insert)
+                                self.conn.commit()
+                            
+                            # 为保证同一股票在同一天只有一条汇总记录，
+                            # 在插入当日 stock_signals 之前，先删除同一股票、同一 insert_date 的旧记录
+                            self.cursor.execute('''
+                                DELETE FROM stock_signals
+                                WHERE stock_code = ? AND insert_date = ?
+                            ''', (stock_code, self.current_time))
+                            
+                            self.cursor.execute('''
+                                INSERT INTO stock_signals (
+                                    stock_code, stock_name, signal, signal_count,
+                                    overall_success_rate, insert_date, insert_price,
+                                    created_at
+                                )
+                                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                            ''', (
+                                stock_code,
+                                data['data']['name'],
+                                ','.join(signal_type_count.keys()),
+                                len(signal_type_count),
+                                round(kdj_analysis['overall_success_rate'], 2),
+                                self.current_time,
+                                round(last_close_price, 2),
+                                self.current_time
+                            ))
+                            
+                            # 输出信号到文件
+                            for signal in kdj_analysis['recent_signals']:
+                                # 输出信号相关信息
+                                if signal:
+                                    signal_info = []
+                                    
+                                    # 基础信息
+                                    signal_info.extend([
+                                        f"日期: {signal['date'].strftime('%Y-%m-%d')}",
+                                        f"信号类型: {signal['signal_type']}",
+                                        f"信号: {signal['signal']}",
+                                        f"信号胜率: {signal['signal_success_rate']:.2f}%",
+                                        f"(历史出现: {signal['signal_total']}次)",
+                                        f"整体胜率: {signal['overall_success_rate']:.2f}%",
+                                        f"收盘价: {signal['close']:.2f}"
+                                    ])
+                                    
+                                    # 根据信号类型添加对应的指标信息
+                                    if signal['signal_type'].startswith('kdj'):
+                                        signal_info.extend([
+                                            f"K值: {signal.get('k_value', 'N/A'):.2f}",
+                                            f"D值: {signal.get('d_value', 'N/A'):.2f}",
+                                            f"J值: {signal.get('j_value', 'N/A'):.2f}"
+                                        ])
+                                    elif signal['signal_type'].startswith('macd'):
+                                        signal_info.extend([
+                                            f"MACD: {signal.get('macd', 'N/A'):.4f}",
+                                            f"MACD信号: {signal.get('macd_signal', 'N/A'):.4f}"
+                                        ])
+                                    elif signal['signal_type'].startswith('rsi'):
+                                        signal_info.extend([
+                                            f"RSI(6): {signal.get('RSI_6', 'N/A'):.2f}",
+                                            f"RSI(12): {signal.get('RSI_12', 'N/A'):.2f}"
+                                        ])
+                                    elif signal['signal_type'].startswith('boll'):
+                                        signal_info.extend([
+                                            f"布林下轨: {signal.get('BBL_20_2.0', 'N/A'):.2f}",
+                                            f"布林中轨: {signal.get('BBM_20_2.0', 'N/A'):.2f}",
+                                            f"布林上轨: {signal.get('BBU_20_2.0', 'N/A'):.2f}"
+                                        ])
+                                    elif signal['signal_type'].startswith('ma'):
+                                        signal_info.extend([
+                                            f"MA5: {signal.get('SMA_5', 'N/A'):.2f}",
+                                            f"MA20: {signal.get('SMA_20', 'N/A'):.2f}"
+                                        ])
+                                    elif signal['signal_type'].startswith('dmi'):
+                                        signal_info.extend([
+                                            f"DMP(14): {signal.get('DMP_14', 'N/A'):.2f}",
+                                            f"DMN(14): {signal.get('DMN_14', 'N/A'):.2f}",
+                                            f"ADX(14): {signal.get('ADX_14', 'N/A'):.2f}"
+                                        ])
+                                    elif signal['signal_type'].startswith('cci'):
+                                        signal_info.extend([
+                                            f"CCI(20): {signal.get('CCI_20', 'N/A'):.2f}"
+                                        ])
+                                    elif signal['signal_type'].startswith('roc'):
+                                        signal_info.extend([
+                                            f"ROC(12): {signal.get('ROC_12', 'N/A'):.2f}"
+                                        ])
+                                    
+                                    # 将所有信息用逗号连接并输出
+                                    signal_info_str = ", ".join(signal_info)
+                                    self.logger.info(signal_info_str)
+                                    # 同时写入信号文件
+                                    self.write_to_signal_file(f"股票: {data['data']['name']}({stock_code}), {signal_info_str}")
+                            self.write_to_signal_file("-" * 80)  # 分隔线
+                            
+                            # 同时保持控制台输出
+                            self.logger.warning(f"股票 {stock_code} KDJ信号分析结果已写入文件: {self.signal_file}")
+                        else:
+                            self.logger.warning(f"股票 {stock_code} 最近5天的信号类型数量 {len(signal_type_count)}，跳过输出")
+                    else:
+                        self.logger.info(f"股票 {stock_code} 最近5天没有满足条件的高胜信号")
+                
+                # 结果数据
+                for index, row in df.iterrows():
+                    item = dict(row)
+                    item.update({
+                        'stock_code': stock_code,
+                        'date': index,
+                        'type': self.kline_type,
+                        'fq_type': self.fq_type
+                    })
+                    
+                    # print(f"获取到K线数据: {stock_code} - {index}")
+                    yield item
+                    
+            else:
+                self.logger.error(f"未获取到股票 {response.meta['stock_code']} 的K线数据")
+                
+        except Exception as e:
+            error_msg = f"解析股票 {response.meta['stock_code']} 的K线数据出错: {str(e)}"
+            self.logger.error(error_msg)
+            self.write_to_signal_file(f"\n错误: {error_msg}")
+            import traceback
+            self.write_to_signal_file(traceback.format_exc())
+            return  # 出现异常时直接返回，不继续执行
+        
+    def process_kline_data(self, stock_code, stock_name, df):
+        """
+        处理K线数据（用于baostock数据源）
+        
+        参数:
+            stock_code: 股票代码
+            stock_name: 股票名称
+            df: pandas.DataFrame，包含K线数据
+        """
+        try:
+            # 检查数据量是否足够
+            if len(df) < 16:
+                self.logger.warning(f"股票 {stock_code} 的数据量不足16天，跳过分析")
+                return
+            
+            # 确保日期索引是datetime类型
+            if not isinstance(df.index, pd.DatetimeIndex):
+                df.index = pd.to_datetime(df.index)
+            
+            last_close_price = df.iloc[-1]['close']  # 最近的收盘价
+            self.logger.info(f"最近一天的日期: {df.iloc[-1].name}, 收盘价: {last_close_price}")
+
+            # 算技术指标
+            if self.calc_indicators:
+                df = TechnicalIndicators.calculate_all(df, INDICATORS_CONFIG)
+                
+                # 分析信号
+                kdj_analysis = self.analyze_signals(df)
+                
+                # 只要有满足条件的信号写入文件
+                if kdj_analysis['recent_signals']:
+                    # 统计信号种类和数量
+                    signal_type_count = {}
+                    for signal in kdj_analysis['recent_signals']:
+                        signal_type = signal['signal']
+                        signal_type_count[signal_type] = signal_type_count.get(signal_type, 0) + 1
+                    
+                    # 有当出现六种以上不同信号时才输出
+                    if len(signal_type_count) > 5:
+                        # 写入文件
+                        self.write_to_signal_file(f"\n股票 {stock_name}({stock_code}) 股票信号分析结果")
+                        self.write_to_signal_file(f"总体成功率: {kdj_analysis['overall_success_rate']:.2f}%")
+                        self.write_to_signal_file(f"总信号数: {kdj_analysis['total_signals']}")
+                        self.write_to_signal_file(f"总成功数: {kdj_analysis['total_success']}")
+                        
+                        # 输出最近信号
+                        self.write_to_signal_file("\n最近3天出现的高胜率信号：")
+                        self.write_to_signal_file(f"共有{len(kdj_analysis['recent_signals'])}个信号，{len(signal_type_count)}种类型：")
+                        # 输出每种信号的数量
+                        for signal_type, count in signal_type_count.items():
+                            self.write_to_signal_file(f"- {signal_type}: {count}个")
+                        
+                        # 批量处理数据库插入
+                        signals_to_insert = []
+                        for signal in kdj_analysis['recent_signals']:
+                            signals_to_insert.append((
+                                stock_code,
+                                stock_name,
+                                signal['date'].strftime("%Y-%m-%d"),
+                                signal['signal'],
+                                round(signal['signal_success_rate'], 2),
+                                round(signal['close'], 2),
+                                self.current_time
+                            ))
+
+                        if signals_to_insert:
+                            # 使用executemany一次性插入多条记录（带唯一约束与 OR IGNORE，重复不会插入）
+                            self.cursor.executemany('''
+                                INSERT OR IGNORE INTO stock_data (
+                                    stock_code, stock_name, date, signal, 
+                                    success_rate, initial_price, created_at
+                                )
+                                VALUES (?, ?, ?, ?, ?, ?, ?)
+                            ''', signals_to_insert)
+                            self.conn.commit()
+                        
+                        # 为保证同一股票在同一天只有一条汇总记录，
+                        # 在插入当日 stock_signals 之前，先删除同一股票、同一 insert_date 的旧记录
+                        self.cursor.execute('''
+                            DELETE FROM stock_signals
+                            WHERE stock_code = ? AND insert_date = ?
+                        ''', (stock_code, self.current_time))
+                        
+                        self.cursor.execute('''
+                            INSERT INTO stock_signals (
+                                stock_code, stock_name, signal, signal_count,
+                                overall_success_rate, insert_date, insert_price,
+                                created_at
+                            )
+                            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                        ''', (
+                            stock_code,
+                            stock_name,
+                            ','.join(signal_type_count.keys()),
+                            len(signal_type_count),
+                            round(kdj_analysis['overall_success_rate'], 2),
+                            self.current_time,
+                            round(last_close_price, 2),
+                            self.current_time
+                        ))
+                        
+                        # 输出信号到文件
+                        for signal in kdj_analysis['recent_signals']:
+                            # 输出信号相关信息
+                            if signal:
+                                signal_info = []
+                                
+                                # 基础信息
+                                signal_info.extend([
+                                    f"日期: {signal['date'].strftime('%Y-%m-%d')}",
+                                    f"信号类型: {signal['signal_type']}",
+                                    f"信号: {signal['signal']}",
+                                    f"信号胜率: {signal['signal_success_rate']:.2f}%",
+                                    f"(历史出现: {signal['signal_total']}次)",
+                                    f"整体胜率: {signal['overall_success_rate']:.2f}%",
+                                    f"收盘价: {signal['close']:.2f}"
+                                ])
+                                
+                                # 根据信号类型添加对应的指标信息
+                                if signal['signal_type'].startswith('kdj'):
+                                    signal_info.extend([
+                                        f"K值: {signal.get('k_value', 'N/A'):.2f}",
+                                        f"D值: {signal.get('d_value', 'N/A'):.2f}",
+                                        f"J值: {signal.get('j_value', 'N/A'):.2f}"
+                                    ])
+                                elif signal['signal_type'].startswith('macd'):
+                                    signal_info.extend([
+                                        f"MACD: {signal.get('macd', 'N/A'):.4f}",
+                                        f"MACD信号: {signal.get('macd_signal', 'N/A'):.4f}"
+                                    ])
+                                elif signal['signal_type'].startswith('rsi'):
+                                    signal_info.extend([
+                                        f"RSI(6): {signal.get('RSI_6', 'N/A'):.2f}",
+                                        f"RSI(12): {signal.get('RSI_12', 'N/A'):.2f}"
+                                    ])
+                                elif signal['signal_type'].startswith('boll'):
+                                    signal_info.extend([
+                                        f"布林下轨: {signal.get('BBL_20_2.0', 'N/A'):.2f}",
+                                        f"布林中轨: {signal.get('BBM_20_2.0', 'N/A'):.2f}",
+                                        f"布林上轨: {signal.get('BBU_20_2.0', 'N/A'):.2f}"
+                                    ])
+                                elif signal['signal_type'].startswith('ma'):
+                                    signal_info.extend([
+                                        f"MA5: {signal.get('SMA_5', 'N/A'):.2f}",
+                                        f"MA20: {signal.get('SMA_20', 'N/A'):.2f}"
+                                    ])
+                                elif signal['signal_type'].startswith('dmi'):
+                                    signal_info.extend([
+                                        f"DMP(14): {signal.get('DMP_14', 'N/A'):.2f}",
+                                        f"DMN(14): {signal.get('DMN_14', 'N/A'):.2f}",
+                                        f"ADX(14): {signal.get('ADX_14', 'N/A'):.2f}"
+                                    ])
+                                elif signal['signal_type'].startswith('cci'):
+                                    signal_info.extend([
+                                        f"CCI(20): {signal.get('CCI_20', 'N/A'):.2f}"
+                                    ])
+                                elif signal['signal_type'].startswith('roc'):
+                                    signal_info.extend([
+                                        f"ROC(12): {signal.get('ROC_12', 'N/A'):.2f}"
+                                    ])
+                                
+                                # 将所有信息用逗号连接并输出
+                                signal_info_str = ", ".join(signal_info)
+                                self.logger.info(signal_info_str)
+                                # 同时写入信号文件
+                                self.write_to_signal_file(f"股票: {stock_name}({stock_code}), {signal_info_str}")
+                        self.write_to_signal_file("-" * 80)  # 分隔线
+                        
+                        # 同时保持控制台输出
+                        self.logger.warning(f"股票 {stock_code} KDJ信号分析结果已写入文件: {self.signal_file}")
+                    else:
+                        self.logger.warning(f"股票 {stock_code} 最近5天的信号类型数量 {len(signal_type_count)}，跳过输出")
+                else:
+                    self.logger.info(f"股票 {stock_code} 最近5天没有满足条件的高胜信号")
+            
+            # 更新数据库中的最高价格
+            self.update_price_extremes(stock_code, stock_name, df)
+            
+        except Exception as e:
+            error_msg = f"处理股票 {stock_code} 的K线数据出错: {str(e)}"
+            self.logger.error(error_msg)
+            self.write_to_signal_file(f"\n错误: {error_msg}")
+            import traceback
+            self.write_to_signal_file(traceback.format_exc())
     
     def parse(self, response):
         try:

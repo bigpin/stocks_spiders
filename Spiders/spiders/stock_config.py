@@ -46,12 +46,22 @@ HEADERS = {
     'Accept': '*/*'
 }
 
-# 股票代码前缀映射
+# 股票代码前缀映射（用于东方财富API）
 STOCK_PREFIX_MAP = {
     'sh': '1',  # 上海证券交易所
     'sz': '0',  # 深圳证券交易所
     '92': '0'   # 北京证券交易所（北交所）
 }
+
+# 股票代码前缀映射（用于baostock）
+BAOSTOCK_PREFIX_MAP = {
+    'sh': 'sh',  # 上海证券交易所
+    'sz': 'sz',  # 深圳证券交易所
+    '92': 'bj'   # 北京证券交易所（北交所）
+}
+
+# 数据源配置：'eastmoney' 或 'baostock'
+DATA_SOURCE = 'baostock'  # 默认使用 baostock
 
 
 # K线数据

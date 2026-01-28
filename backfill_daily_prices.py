@@ -20,7 +20,8 @@ import time
 sys.path.insert(0, os.path.dirname(__file__))
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'Spiders'))
 
-from Spiders.spiders.stock_config import KLINE_API, KLINE_FIELD_MAPPING, STOCK_PREFIX_MAP, HEADERS
+from Spiders.spiders.stock_config import KLINE_API, KLINE_FIELD_MAPPING, STOCK_PREFIX_MAP, HEADERS, DATA_SOURCE
+from Spiders.spiders.baostock_helper import fetch_kline_data_baostock_simple
 
 DB_PATH = os.path.join(os.path.dirname(__file__), 'stock_signals.db')
 
@@ -186,7 +187,19 @@ def backfill_daily_prices_for_signal(signal_id, stock_code, stock_name, insert_d
 def fetch_kline_data_for_backfill(stock_code, start_date, end_date, verbose=False):
     """
     获取股票的K线数据（用于数据补充）
-    使用爬虫的API逻辑获取数据
+    支持baostock和东方财富API两种数据源
+    """
+    # 根据配置选择数据源
+    if DATA_SOURCE == 'baostock':
+        return fetch_kline_data_baostock_simple(stock_code, start_date, end_date, verbose)
+    else:
+        # 使用原有的东方财富API逻辑
+        return fetch_kline_data_eastmoney(stock_code, start_date, end_date, verbose)
+
+
+def fetch_kline_data_eastmoney(stock_code, start_date, end_date, verbose=False):
+    """
+    使用东方财富API获取K线数据（原有逻辑）
     """
     try:
         # 获取股票代码前缀对应的数字
@@ -232,7 +245,7 @@ def fetch_kline_data_for_backfill(stock_code, start_date, end_date, verbose=Fals
                         print(f"    尝试不指定日期范围...")
                     # 如果指定日期范围没有数据，尝试不指定日期范围
                     if start_date or end_date:
-                        return fetch_kline_data_for_backfill(stock_code, None, None, verbose=False)
+                        return fetch_kline_data_eastmoney(stock_code, None, None, verbose=False)
                     return None
                 
                 if verbose:

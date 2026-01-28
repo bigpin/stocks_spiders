@@ -16,3 +16,6 @@ Flask>=3.0.0
 # 其他工具
 backports.tarfile>=0.1.0
 
+# 股票数据接口
+baostock>=0.8.8
+
