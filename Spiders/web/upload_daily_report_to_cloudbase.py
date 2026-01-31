@@ -132,6 +132,22 @@ def main(argv: List[str]) -> int:
             print(f"[INFO] uploaded {ok}/{len(docs)} ...")
 
     print(f"[OK] uploaded docs: {ok}")
+
+    # 主动触发云端推送检查函数（checkStockSignals）
+    try:
+        report_date = report_date_from_filename(file_path)
+        print(f"[INFO] invoking cloud function checkStockSignals for date={report_date} ...")
+        fn_resp = client.call_function(
+            name="checkStockSignals",
+            data={
+                "action": "manual",
+                "reportDate": report_date,
+            },
+        )
+        print(f"[OK] cloud function checkStockSignals invoked, resp: {fn_resp}")
+    except Exception as e:
+        print(f"[WARN] failed to invoke cloud function checkStockSignals: {e}", file=sys.stderr)
+
     return 0
 
 

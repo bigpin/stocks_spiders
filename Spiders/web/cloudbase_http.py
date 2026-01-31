@@ -175,6 +175,19 @@ class CloudBaseClient:
                 time.sleep(0.6 * (2 ** i))
         raise CloudBaseError(f"TCB API call failed after retries. endpoint={endpoint}") from last_err
 
+    # ---- Cloud Functions ----
+    def call_function(self, *, name: str, data: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        """
+        调用云函数（https://api.weixin.qq.com/tcb/invokecloudfunction）
+        """
+        payload = {
+            "env": self.cfg.env_id,
+            "name": name,
+        }
+        if data is not None:
+            payload["data"] = json.dumps(data, ensure_ascii=False)
+        return self._call_tcb("invokecloudfunction", payload)
+
     def database_query(self, query: str) -> Dict[str, Any]:
         return self._call_tcb("databasequery", {"env": self.cfg.env_id, "query": query})
 
