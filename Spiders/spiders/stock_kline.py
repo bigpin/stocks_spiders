@@ -9,9 +9,16 @@ from .stock_config import (
     STOCK_PREFIX_MAP,
     HEADERS,
     INDICATORS_CONFIG,
-    DATA_SOURCE
+    DATA_SOURCE,
+    BAOSTOCK_FETCH_WORKERS,
 )
-from .baostock_helper import fetch_kline_data_baostock_simple, get_stock_name_baostock
+from .baostock_helper import (
+    fetch_kline_data_baostock_simple,
+    get_stock_name_baostock,
+    login_baostock,
+    fetch_one_baostock_worker,
+)
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from .technical_indicators import TechnicalIndicators
 import sqlite3
 
@@ -196,72 +203,74 @@ class StockKlineSpider(scrapy.Spider):
         self.conn.commit()
     
     def start_requests(self):
-        count = 0
-        for stock_code in self.stock_codes:
-            count += 1
-            #if count > 100: # 限制请求数量
-            #    break
-            self.logger.warning(f"开始请求第{count}个股票 {stock_code} 的数据")
-            
-            # 根据数据源配置选择不同的获取方式
-            if DATA_SOURCE == 'baostock':
-                # 使用baostock直接获取数据
-                df = fetch_kline_data_baostock_simple(
-                    stock_code=stock_code,
-                    start_date=self.start_date,
-                    end_date=self.end_date,
-                    verbose=False
-                )
-                
-                if df is not None and not df.empty:
-                    # 在主程序中打印部分请求回来的原始数据，便于检查
+        # 根据数据源配置选择不同的获取方式
+        if DATA_SOURCE == 'baostock':
+            # 多进程并行：每个进程独立连接 baostock，互不干扰，可真正并行
+            workers = max(1, min(int(BAOSTOCK_FETCH_WORKERS), 16))
+            total = len(self.stock_codes)
+            self.logger.warning(f"开始拉取 {total} 只股票，{workers} 进程并行，每 50 只打印进度")
+            results = {}
+            done = 0
+            with ProcessPoolExecutor(max_workers=workers) as executor:
+                futures = {
+                    executor.submit(
+                        fetch_one_baostock_worker,
+                        code,
+                        self.start_date,
+                        self.end_date,
+                    ): code
+                    for code in self.stock_codes
+                }
+                for future in as_completed(futures):
+                    code = futures[future]
                     try:
-                        self.logger.info(
-                            f"[baostock] {stock_code} 获取到 {len(df)} 条K线数据，列: {list(df.columns)}"
-                        )
-                        # 只打印前几行，避免日志过大
-                        preview_rows = min(5, len(df))
-                        self.logger.info(
-                            f"[baostock] {stock_code} 数据预览(前{preview_rows}行):\n"
-                            f"{df.head(preview_rows).to_string()}"
-                        )
+                        results[code] = future.result()
                     except Exception as e:
-                        self.logger.error(f"[baostock] 打印 {stock_code} 数据预览失败: {e}")
+                        self.logger.error(f"拉取 {code} 出错: {e}")
+                        results[code] = (code, None, None)
+                    done += 1
+                    if done == 1 or done % 50 == 0 or done == total:
+                        self.logger.warning(f"已拉取 {done}/{total} 只")
 
-                    # 获取股票名称
-                    stock_name = get_stock_name_baostock(stock_code) or stock_code
-                    # 直接处理数据，不使用Scrapy的Request机制
+            for count, stock_code in enumerate(self.stock_codes, 1):
+                if stock_code not in results:
+                    continue
+                stock_code, stock_name, df = results[stock_code]
+                if df is not None and not df.empty:
+                    self.logger.warning(f"开始处理第{count}个股票 {stock_code} 的数据")
                     self.process_kline_data(stock_code, stock_name, df)
                 else:
                     self.logger.error(f"无法获取 {stock_code} 的K线数据")
-            else:
-                # 使用原有的东方财富API（Scrapy Request机制）
-                prefix = STOCK_PREFIX_MAP.get(stock_code[:2])
-                if not prefix:
-                    self.logger.error(f"不支持的股票代码前缀: {stock_code}")
-                    continue
-                
-                # 构建API请求参数
-                params = {
-                    'secid': f"{prefix}.{stock_code[2:]}",
-                    'fields1': 'f1,f2,f3,f4,f5,f6,f7,f8,f9,f10,f11,f12,f13',
-                    'fields2': 'f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61',
-                    'klt': KLINE_API['klt'][self.kline_type],
-                    'fqt': KLINE_API['fqt'][self.fq_type],
-                    'ut': KLINE_API['ut'],
-                    'beg': self.start_date or '',
-                    'end': self.end_date or '',
-                    'lmt': '1000'  # 限制返回1000条数据
-                }
-                
-                url = f"{KLINE_API['base_url']}?" + "&".join([f"{k}={v}" for k, v in params.items()])
-                
-                yield scrapy.Request(
-                    url,
-                    callback=self.parse,
-                    meta={'stock_code': stock_code},
-                    headers=HEADERS
-                )
+            return
+
+        # 非 baostock：原有逐只请求逻辑（东方财富等）
+        # 东方财富 API（Scrapy Request 机制）
+        count = 0
+        for stock_code in self.stock_codes:
+            count += 1
+            self.logger.warning(f"开始请求第{count}个股票 {stock_code} 的数据")
+            prefix = STOCK_PREFIX_MAP.get(stock_code[:2])
+            if not prefix:
+                self.logger.error(f"不支持的股票代码前缀: {stock_code}")
+                continue
+            params = {
+                'secid': f"{prefix}.{stock_code[2:]}",
+                'fields1': 'f1,f2,f3,f4,f5,f6,f7,f8,f9,f10,f11,f12,f13',
+                'fields2': 'f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61',
+                'klt': KLINE_API['klt'][self.kline_type],
+                'fqt': KLINE_API['fqt'][self.fq_type],
+                'ut': KLINE_API['ut'],
+                'beg': self.start_date or '',
+                'end': self.end_date or '',
+                'lmt': '1000',
+            }
+            url = f"{KLINE_API['base_url']}?" + "&".join([f"{k}={v}" for k, v in params.items()])
+            yield scrapy.Request(
+                url,
+                callback=self.parse,
+                meta={'stock_code': stock_code},
+                headers=HEADERS
+            )
     
     def write_to_signal_file(self, content):
         """将内容写入信号文件"""

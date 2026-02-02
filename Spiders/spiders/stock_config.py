@@ -63,6 +63,9 @@ BAOSTOCK_PREFIX_MAP = {
 # 数据源配置：'eastmoney' 或 'baostock'
 DATA_SOURCE = 'baostock'  # 默认使用 baostock
 
+# baostock 并行拉取时的线程数（仅当 DATA_SOURCE='baostock' 时生效）
+BAOSTOCK_FETCH_WORKERS = 8
+
 
 # K线数据
 # stock_config.py 添加K线相关配置

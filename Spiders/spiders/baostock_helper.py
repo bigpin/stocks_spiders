@@ -238,3 +238,21 @@ def get_stock_name_baostock(stock_code):
         return None
     except Exception:
         return None
+
+
+def fetch_one_baostock_worker(stock_code, start_date, end_date):
+    """
+    供多进程调用的 worker：在独立进程中拉取单只股票 K 线 + 名称，避免 baostock SDK 线程安全问题。
+    返回 (stock_code, stock_name, df)，df 为 None 表示拉取失败。
+    """
+    login_baostock()
+    df = fetch_kline_data_baostock_simple(
+        stock_code=stock_code,
+        start_date=start_date,
+        end_date=end_date,
+        verbose=False,
+    )
+    if df is None or df.empty:
+        return (stock_code, None, None)
+    name = get_stock_name_baostock(stock_code) or stock_code
+    return (stock_code, name, df)
