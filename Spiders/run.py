@@ -8,13 +8,97 @@ import sys
 import subprocess
 import argparse
 
-def run_stock_list_spider():
-    """获取股票列表"""
-    settings = get_project_settings()
-    settings.set('REQUEST_FINGERPRINTER_IMPLEMENTATION', '2.7')
-    process = CrawlerProcess(settings)
-    process.crawl(StockListSpider, api_key='8371893ed4ab2b2f75b59c7fa26bf2fe')
-    process.start()
+# 股票列表缓存配置
+STOCK_LIST_FILE = 'stock_list.txt'
+STOCK_LIST_CACHE_DAYS = 7  # 股票列表缓存天数（一周）
+
+
+def is_stock_list_cache_valid(stock_file=STOCK_LIST_FILE, cache_days=STOCK_LIST_CACHE_DAYS):
+    """
+    检查股票列表缓存是否有效
+    
+    Args:
+        stock_file: 股票列表文件路径
+        cache_days: 缓存有效天数
+        
+    Returns:
+        bool: 缓存是否有效
+    """
+    if not os.path.exists(stock_file):
+        return False
+    
+    # 检查文件是否为空
+    if os.path.getsize(stock_file) == 0:
+        return False
+    
+    # 检查文件修改时间
+    file_mtime = datetime.fromtimestamp(os.path.getmtime(stock_file))
+    cache_expiry = datetime.now() - timedelta(days=cache_days)
+    
+    return file_mtime > cache_expiry
+
+
+def run_stock_list_spider(force=False, log_file=None):
+    """
+    获取股票列表（带缓存）
+    
+    使用 subprocess 运行，避免 Twisted reactor 只能启动一次的问题
+    
+    Args:
+        force: 是否强制刷新，忽略缓存
+        log_file: 日志文件路径
+    """
+    def log(msg, also_print=True):
+        if log_file:
+            log_to_file(log_file, msg, also_print=also_print)
+        elif also_print:
+            print(msg)
+    
+    if not force and is_stock_list_cache_valid():
+        log(f"[INFO] 股票列表缓存有效（{STOCK_LIST_CACHE_DAYS}天内），跳过获取")
+        return False
+    
+    log(f"[INFO] 开始获取股票列表（使用子进程）...")
+    
+    # 获取当前脚本所在目录
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    
+    try:
+        # 使用 subprocess 在单独进程中运行爬虫，避免 reactor 冲突
+        result = subprocess.run(
+            [sys.executable, '-c', '''
+import sys
+sys.path.insert(0, "{script_dir}")
+from scrapy.crawler import CrawlerProcess
+from scrapy.utils.project import get_project_settings
+from spiders.get_stock_list import StockListSpider
+
+settings = get_project_settings()
+settings.set('REQUEST_FINGERPRINTER_IMPLEMENTATION', '2.7')
+process = CrawlerProcess(settings)
+process.crawl(StockListSpider, api_key='8371893ed4ab2b2f75b59c7fa26bf2fe')
+process.start()
+'''.format(script_dir=script_dir)],
+            cwd=script_dir,
+            capture_output=True,
+            text=True,
+            encoding='utf-8'
+        )
+        
+        if result.returncode == 0:
+            log(f"[INFO] 股票列表获取完成")
+            return True
+        else:
+            log(f"[WARNING] 股票列表获取失败 (exit code {result.returncode})")
+            if result.stderr:
+                log(f"[WARNING] 错误输出: {result.stderr}", also_print=False)
+            return False
+            
+    except Exception as e:
+        log(f"[ERROR] 获取股票列表时发生异常: {e}")
+        import traceback
+        log(f"[ERROR] 错误详情:\n{traceback.format_exc()}", also_print=False)
+        return False
 
 def run_stock_detail_spider(stock_codes='sh603288,sz000858'):
     """爬取指定股票的详细信息"""
@@ -246,8 +330,15 @@ if __name__ == "__main__":
     
     log_to_file(log_file, f"[STEP 1] 日志文件初始化完成，运行模式: {date_desc}的数据 ({target_date})")
     
-    # 运行获取股票列表的爬虫
-    # run_stock_list_spider()
+    # 检查并更新股票列表（一周获取一次）
+    log_to_file(log_file, f"[STEP 1.5] 检查股票列表缓存...")
+    stock_file_path = os.path.join(os.path.dirname(__file__), STOCK_LIST_FILE)
+    if is_stock_list_cache_valid(stock_file_path):
+        file_mtime = datetime.fromtimestamp(os.path.getmtime(stock_file_path))
+        log_to_file(log_file, f"[STEP 1.5] 股票列表缓存有效，上次更新: {file_mtime.strftime('%Y-%m-%d %H:%M:%S')}")
+    else:
+        log_to_file(log_file, f"[STEP 1.5] 股票列表缓存已过期或不存在，开始更新...")
+        run_stock_list_spider(force=False, log_file=log_file)
     
     # 运行获取股票详情的爬虫
     # run_stock_detail_spider()

@@ -147,6 +147,9 @@ def main(argv: List[str]) -> int:
         print(f"[OK] cloud function checkStockSignals invoked, resp: {fn_resp}")
     except Exception as e:
         print(f"[WARN] failed to invoke cloud function checkStockSignals: {e}", file=sys.stderr)
+        # 打印详细错误信息帮助诊断
+        import traceback
+        traceback.print_exc(file=sys.stderr)
 
     return 0
 

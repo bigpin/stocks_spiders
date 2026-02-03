@@ -156,14 +156,19 @@ class CloudBaseClient:
         token = self.get_access_token()
         url = f"{TcbApiBase}{endpoint}?access_token={urllib.parse.quote(token)}"
         last_err = None
+        last_resp = None
         for i in range(retry + 1):
             try:
                 resp = _http_json(url, payload)
+                last_resp = resp
                 # WeChat-style error fields
                 errcode = int(resp.get("errcode", 0) or 0)
                 if errcode != 0:
-                    raise CloudBaseError(f"TCB API error. endpoint={endpoint}, resp={resp}")
+                    errmsg = resp.get("errmsg", "unknown")
+                    raise CloudBaseError(f"TCB API error. endpoint={endpoint}, errcode={errcode}, errmsg={errmsg}, resp={resp}")
                 return resp
+            except CloudBaseError:
+                raise  # 不重试 API 返回的业务错误
             except Exception as e:
                 last_err = e
                 # token may expire; refresh once
@@ -173,20 +178,52 @@ class CloudBaseClient:
                     except Exception:
                         pass
                 time.sleep(0.6 * (2 ** i))
-        raise CloudBaseError(f"TCB API call failed after retries. endpoint={endpoint}") from last_err
+        err_detail = f"last_error={last_err}, last_resp={last_resp}" if last_err else f"last_resp={last_resp}"
+        raise CloudBaseError(f"TCB API call failed after retries. endpoint={endpoint}, {err_detail}") from last_err
 
     # ---- Cloud Functions ----
     def call_function(self, *, name: str, data: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         """
         调用云函数（https://api.weixin.qq.com/tcb/invokecloudfunction）
+        
+        注意：env 和 name 需要作为 URL 查询参数传递
+        请求体 POSTBODY 直接作为云函数的 event 参数
+        参考文档：https://developers.weixin.qq.com/miniprogram/dev/wxcloudservice/wxcloud/reference-http-api/functions/invokeCloudFunction.html
         """
-        payload = {
+        token = self.get_access_token()
+        params = {
+            "access_token": token,
             "env": self.cfg.env_id,
             "name": name,
         }
-        if data is not None:
-            payload["data"] = json.dumps(data, ensure_ascii=False)
-        return self._call_tcb("invokecloudfunction", payload)
+        url = f"{TcbApiBase}invokecloudfunction?" + urllib.parse.urlencode(params)
+        
+        # 请求体直接作为云函数的 event 参数
+        post_body = data if data else {}
+        
+        last_err = None
+        for i in range(3):
+            try:
+                resp = _http_json(url, post_body)
+                errcode = int(resp.get("errcode", 0) or 0)
+                if errcode != 0:
+                    errmsg = resp.get("errmsg", "unknown")
+                    raise CloudBaseError(f"Cloud function error. name={name}, errcode={errcode}, errmsg={errmsg}")
+                return resp
+            except CloudBaseError:
+                raise
+            except Exception as e:
+                last_err = e
+                if i == 0:
+                    try:
+                        self.get_access_token(force_refresh=True)
+                        # 更新 token
+                        params["access_token"] = self.get_access_token()
+                        url = f"{TcbApiBase}invokecloudfunction?" + urllib.parse.urlencode(params)
+                    except Exception:
+                        pass
+                time.sleep(0.6 * (2 ** i))
+        raise CloudBaseError(f"Cloud function call failed after retries. name={name}") from last_err
 
     def database_query(self, query: str) -> Dict[str, Any]:
         return self._call_tcb("databasequery", {"env": self.cfg.env_id, "query": query})
