@@ -20,7 +20,8 @@ from cloudbase_http import CloudBaseClient, get_cloudbase_config
 def main():
     parser = argparse.ArgumentParser(description="测试云函数调用")
     parser.add_argument("--function", default="checkStockSignals", help="云函数名称")
-    parser.add_argument("--date", default=None, help="报告日期 (YYYYMMDD)")
+    parser.add_argument("--action", default="test", choices=["test", "manual"], help="触发模式: test=测试, manual=正式触发")
+    parser.add_argument("--date", default=None, help="报告日期 (YYYY-MM-DD 格式)")
     parser.add_argument("--dotenv", default="", help=".env 文件路径")
     args = parser.parse_args()
 
@@ -53,9 +54,9 @@ def main():
         return 1
 
     # 测试云函数调用
-    print(f"\n[TEST 2] 测试调用云函数 '{args.function}'...")
+    print(f"\n[TEST 2] 调用云函数 '{args.function}' (action={args.action})...")
     
-    data = {"action": "test"}
+    data = {"action": args.action}
     if args.date:
         data["reportDate"] = args.date
     
@@ -80,3 +81,5 @@ def main():
 
 if __name__ == "__main__":
     sys.exit(main())
+    # cd /Users/dingli/Documents/UGit/Spiders/Spiders/web && python test_cloud_function.py --action manual --date 2026-02-03
+    
