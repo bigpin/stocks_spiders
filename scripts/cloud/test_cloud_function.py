@@ -12,9 +12,23 @@ import argparse
 import os
 import sys
 
-sys.path.insert(0, os.path.dirname(__file__))
+# 添加父目录到路径，以便导入 cloudbase_lib
+sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
-from cloudbase_http import CloudBaseClient, get_cloudbase_config
+from cloudbase_lib import CloudBaseClient, get_cloudbase_config
+
+
+def _find_dotenv() -> str:
+    """查找 .env 文件"""
+    possible_paths = [
+        os.path.join(os.path.dirname(__file__), ".env"),
+        os.path.join(os.path.dirname(os.path.dirname(__file__)), "cloudbase_lib", ".env"),
+        os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "Spiders", "web", ".env"),
+    ]
+    for path in possible_paths:
+        if os.path.exists(path):
+            return path
+    return ""
 
 
 def main():
@@ -26,11 +40,7 @@ def main():
     args = parser.parse_args()
 
     # 加载配置
-    dotenv = args.dotenv.strip()
-    if not dotenv:
-        default_env = os.path.join(os.path.dirname(__file__), ".env")
-        if os.path.exists(default_env):
-            dotenv = default_env
+    dotenv = args.dotenv.strip() or _find_dotenv()
 
     print(f"[INFO] 加载配置文件: {dotenv or '(使用环境变量)'}")
 

@@ -18,12 +18,17 @@ import sys
 import time
 from typing import Any, Dict, List
 
-# Allow running from any working directory:
-sys.path.insert(0, os.path.dirname(__file__))
+# 添加父目录到路径，以便导入 cloudbase_lib
+sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
-from cloudbase_http import CloudBaseClient, get_cloudbase_config  # noqa: E402
-from report_ids import make_event_id, make_report_id, report_date_from_filename  # noqa: E402
-from report_parser import parse_daily_report_file  # noqa: E402
+from cloudbase_lib import (  # noqa: E402
+    CloudBaseClient,
+    get_cloudbase_config,
+    make_event_id,
+    make_report_id,
+    report_date_from_filename,
+    parse_daily_report_file,
+)
 
 
 def _now_iso() -> str:
@@ -102,9 +107,16 @@ def main(argv: List[str]) -> int:
 
     dotenv = args.dotenv.strip()
     if not dotenv:
-        default_env = os.path.join(os.path.dirname(__file__), ".env")
-        if os.path.exists(default_env):
-            dotenv = default_env
+        # 尝试多个可能的 .env 位置
+        possible_paths = [
+            os.path.join(os.path.dirname(__file__), ".env"),
+            os.path.join(os.path.dirname(os.path.dirname(__file__)), "cloudbase_lib", ".env"),
+            os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "Spiders", "web", ".env"),
+        ]
+        for path in possible_paths:
+            if os.path.exists(path):
+                dotenv = path
+                break
 
     docs = build_docs(file_path)
     summary_cnt = sum(1 for d in docs if d.get("doc_type") == "stock_summary")

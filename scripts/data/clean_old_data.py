@@ -9,9 +9,10 @@ import sqlite3
 import os
 from datetime import datetime
 
-# 数据库路径
-DB_PATH = os.path.join(os.path.dirname(__file__), 'stock_signals.db')
-WEB_DB_PATH = os.path.join(os.path.dirname(__file__), 'Spiders', 'web', 'stock_signals.db')
+# 数据库路径（脚本在 scripts/data 目录下，需要向上两级到项目根）
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
+DB_PATH = os.path.join(PROJECT_ROOT, 'stock_signals.db')
+WEB_DB_PATH = os.path.join(PROJECT_ROOT, 'Spiders', 'web', 'stock_signals.db')
 
 def clean_old_data(db_path, year=2024):
     """

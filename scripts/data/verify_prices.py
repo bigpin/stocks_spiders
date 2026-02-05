@@ -10,7 +10,9 @@ import os
 import argparse
 from collections import defaultdict
 
-DB_PATH = os.path.join(os.path.dirname(__file__), 'stock_signals.db')
+# 数据库路径（脚本在 scripts/data 目录下，需要向上两级到项目根）
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
+DB_PATH = os.path.join(PROJECT_ROOT, 'stock_signals.db')
 
 def verify_daily_prices(stock_codes=None, start_date=None, end_date=None):
     """验证每日价格数据的完整性"""

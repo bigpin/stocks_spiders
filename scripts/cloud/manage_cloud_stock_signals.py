@@ -20,11 +20,10 @@ import os
 import sys
 from typing import Any, Dict, List, Optional
 
-# Allow running from any working directory:
-sys.path.insert(0, os.path.dirname(__file__))
+# 添加父目录到路径，以便导入 cloudbase_lib
+sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
-from cloudbase_http import CloudBaseClient, CloudBaseError, get_cloudbase_config  # noqa: E402
-from report_ids import make_report_id  # noqa: E402
+from cloudbase_lib import CloudBaseClient, CloudBaseError, get_cloudbase_config, make_report_id  # noqa: E402
 
 
 def _parse_resp_data(resp: Dict[str, Any]) -> List[Dict[str, Any]]:
@@ -254,9 +253,16 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: List[str]) -> int:
     args = build_parser().parse_args(argv)
     if not args.dotenv:
-        default_env = os.path.join(os.path.dirname(__file__), ".env")
-        if os.path.exists(default_env):
-            args.dotenv = default_env
+        # 尝试多个可能的 .env 位置
+        possible_paths = [
+            os.path.join(os.path.dirname(__file__), ".env"),
+            os.path.join(os.path.dirname(os.path.dirname(__file__)), "cloudbase_lib", ".env"),
+            os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "Spiders", "web", ".env"),
+        ]
+        for path in possible_paths:
+            if os.path.exists(path):
+                args.dotenv = path
+                break
     return int(args.func(args))
 
 

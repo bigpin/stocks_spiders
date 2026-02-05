@@ -54,17 +54,21 @@ def run_stock_list_spider(force=False, log_file=None):
         elif also_print:
             print(msg)
     
-    if not force and is_stock_list_cache_valid():
+    # stock_list.txt 在项目根目录
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    project_root = os.path.dirname(script_dir)
+    stock_file_path = os.path.join(project_root, STOCK_LIST_FILE)
+    
+    if not force and is_stock_list_cache_valid(stock_file_path):
         log(f"[INFO] 股票列表缓存有效（{STOCK_LIST_CACHE_DAYS}天内），跳过获取")
         return False
     
     log(f"[INFO] 开始获取股票列表（使用子进程）...")
-    
-    # 获取当前脚本所在目录
-    script_dir = os.path.dirname(os.path.abspath(__file__))
+    log(f"[INFO] 股票列表文件路径: {stock_file_path}")
     
     try:
         # 使用 subprocess 在单独进程中运行爬虫，避免 reactor 冲突
+        # 工作目录设为项目根目录，确保 stock_list.txt 写入正确位置
         result = subprocess.run(
             [sys.executable, '-c', '''
 import sys
@@ -79,7 +83,7 @@ process = CrawlerProcess(settings)
 process.crawl(StockListSpider, api_key='8371893ed4ab2b2f75b59c7fa26bf2fe')
 process.start()
 '''.format(script_dir=script_dir)],
-            cwd=script_dir,
+            cwd=project_root,  # 工作目录设为项目根目录
             capture_output=True,
             text=True,
             encoding='utf-8'
@@ -172,8 +176,8 @@ def upload_daily_report_to_cloudbase(report_date=None, log_file=None):
     
     log(f"报告文件存在，文件大小: {os.path.getsize(report_file)} 字节")
     
-    # 上传脚本路径
-    upload_script = os.path.join(project_root, 'Spiders', 'web', 'upload_daily_report_to_cloudbase.py')
+    # 上传脚本路径（已移动到 scripts/cloud 目录）
+    upload_script = os.path.join(project_root, 'scripts', 'cloud', 'upload_report.py')
     
     if not os.path.exists(upload_script):
         log(f"[ERROR] 上传脚本不存在: {upload_script}", also_print=False)
@@ -332,7 +336,9 @@ if __name__ == "__main__":
     
     # 检查并更新股票列表（一周获取一次）
     log_to_file(log_file, f"[STEP 1.5] 检查股票列表缓存...")
-    stock_file_path = os.path.join(os.path.dirname(__file__), STOCK_LIST_FILE)
+    # stock_list.txt 在项目根目录（run.py 的上一级目录）
+    project_root = os.path.dirname(os.path.dirname(__file__))
+    stock_file_path = os.path.join(project_root, STOCK_LIST_FILE)
     if is_stock_list_cache_valid(stock_file_path):
         file_mtime = datetime.fromtimestamp(os.path.getmtime(stock_file_path))
         log_to_file(log_file, f"[STEP 1.5] 股票列表缓存有效，上次更新: {file_mtime.strftime('%Y-%m-%d %H:%M:%S')}")
@@ -343,8 +349,27 @@ if __name__ == "__main__":
     # 运行获取股票详情的爬虫
     # run_stock_detail_spider()
     
+    # 统计本次将要处理的股票代码数量（优先从股票列表文件统计）
+    try:
+        if os.path.exists(stock_file_path):
+            with open(stock_file_path, 'r', encoding='utf-8') as f:
+                codes = [line.strip() for line in f if line.strip()]
+            code_count = len(codes)
+        else:
+            if isinstance(STOCK_CODES, str):
+                code_count = len([c for c in STOCK_CODES.split(',') if c.strip()])
+            else:
+                code_count = len(STOCK_CODES)
+    except Exception as e:
+        # 出现异常时退回用 STOCK_CODES 粗略统计，避免影响主流程
+        log_to_file(log_file, f"[STEP 1.5] 统计股票数量时出错: {e}，退回使用 STOCK_CODES 统计", also_print=False)
+        if isinstance(STOCK_CODES, str):
+            code_count = len([c for c in STOCK_CODES.split(',') if c.strip()])
+        else:
+            code_count = len(STOCK_CODES)
+    
     # 运行获取带技术指标K线数据的爬虫
-    log_to_file(log_file, f"[STEP 2] 开始执行爬虫任务，股票代码数量: {len(STOCK_CODES.split(',')) if isinstance(STOCK_CODES, str) else len([c for c in STOCK_CODES.split(',') if c.strip()])}，日期: {target_date}")
+    log_to_file(log_file, f"[STEP 2] 开始执行爬虫任务，股票代码数量: {code_count}，日期: {target_date}")
     try:
         # 如果明确指定了日期参数，传入日期参数；否则使用默认（今天）
         if date_specified:

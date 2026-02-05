@@ -16,14 +16,15 @@ import urllib.request
 import urllib.parse
 import time
 
-# 添加项目路径
-sys.path.insert(0, os.path.dirname(__file__))
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'Spiders'))
+# 添加项目路径（脚本在 scripts/data 目录下，需要向上两级到项目根）
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
+sys.path.insert(0, PROJECT_ROOT)
+sys.path.insert(0, os.path.join(PROJECT_ROOT, 'Spiders'))
 
 from Spiders.spiders.stock_config import KLINE_API, KLINE_FIELD_MAPPING, STOCK_PREFIX_MAP, HEADERS, DATA_SOURCE
 from Spiders.spiders.baostock_helper import fetch_kline_data_baostock_simple
 
-DB_PATH = os.path.join(os.path.dirname(__file__), 'stock_signals.db')
+DB_PATH = os.path.join(PROJECT_ROOT, 'stock_signals.db')
 
 def ensure_table_exists():
     """确保 stock_signal_daily_prices 表存在"""
