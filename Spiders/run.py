@@ -63,12 +63,24 @@ def run_stock_list_spider(force=False, log_file=None):
         log(f"[INFO] 股票列表缓存有效（{STOCK_LIST_CACHE_DAYS}天内），跳过获取")
         return False
     
-    log(f"[INFO] 开始获取股票列表（使用子进程）...")
     log(f"[INFO] 股票列表文件路径: {stock_file_path}")
     
+    # 优先使用 baostock 获取股票列表（无需 API Key、无需子进程）
     try:
-        # 使用 subprocess 在单独进程中运行爬虫，避免 reactor 冲突
-        # 工作目录设为项目根目录，确保 stock_list.txt 写入正确位置
+        from spiders.baostock_helper import get_stock_list_baostock
+        codes = get_stock_list_baostock(a_share_only=True)
+        if codes:
+            with open(stock_file_path, 'w', encoding='utf-8') as f:
+                f.write('\n'.join(codes))
+            log(f"[INFO] 股票列表获取完成（baostock），共 {len(codes)} 只")
+            return True
+        log(f"[WARNING] baostock 返回空列表（可能为非交易日），尝试聚合接口...")
+    except Exception as e:
+        log(f"[WARNING] baostock 获取股票列表失败: {e}，尝试聚合接口...", also_print=False)
+    
+    # 回退：使用聚合数据接口（子进程 Scrapy）
+    log(f"[INFO] 开始使用聚合接口获取股票列表（子进程）...")
+    try:
         result = subprocess.run(
             [sys.executable, '-c', '''
 import sys
@@ -83,21 +95,18 @@ process = CrawlerProcess(settings)
 process.crawl(StockListSpider, api_key='8371893ed4ab2b2f75b59c7fa26bf2fe')
 process.start()
 '''.format(script_dir=script_dir)],
-            cwd=project_root,  # 工作目录设为项目根目录
+            cwd=project_root,
             capture_output=True,
             text=True,
             encoding='utf-8'
         )
-        
         if result.returncode == 0:
-            log(f"[INFO] 股票列表获取完成")
+            log(f"[INFO] 股票列表获取完成（聚合接口）")
             return True
-        else:
-            log(f"[WARNING] 股票列表获取失败 (exit code {result.returncode})")
-            if result.stderr:
-                log(f"[WARNING] 错误输出: {result.stderr}", also_print=False)
-            return False
-            
+        log(f"[WARNING] 股票列表获取失败 (exit code {result.returncode})")
+        if result.stderr:
+            log(f"[WARNING] 错误输出: {result.stderr}", also_print=False)
+        return False
     except Exception as e:
         log(f"[ERROR] 获取股票列表时发生异常: {e}")
         import traceback

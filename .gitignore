@@ -34,3 +34,4 @@ stock_list.txt
 com.dingli.spiders.run.plist
 Spiders/web/.env
 Spiders/web/.cache/wechat_access_token.json
+scripts/cloudbase_lib/.cache

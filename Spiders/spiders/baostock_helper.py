@@ -58,6 +58,105 @@ def logout_baostock():
         _BAOSTOCK_LOGGED_IN = False
 
 
+def _get_trade_days_baostock(before_date=None, back_days=30):
+    """
+    用 query_trade_dates 获取「最近若干个交易日」，从新到旧排序。
+    before_date: 不晚于该日期，默认今天；格式 YYYY-MM-DD 或 datetime
+    back_days: 向前查询的日历天数
+    返回: list['YYYY-MM-DD']，空列表表示失败
+    """
+    from datetime import timedelta
+    login_baostock()
+    if before_date is None:
+        end = datetime.now()
+    elif isinstance(before_date, str):
+        end = datetime.strptime(before_date[:10], "%Y-%m-%d")
+    else:
+        end = before_date
+    start = end - timedelta(days=max(1, back_days))
+    start_str = start.strftime("%Y-%m-%d")
+    end_str = end.strftime("%Y-%m-%d")
+    rs = bs.query_trade_dates(start_date=start_str, end_date=end_str)
+    if rs.error_code != "0":
+        return []
+    trading_dates = []
+    while rs.next():
+        row = rs.get_row_data()
+        if len(row) >= 2 and row[1] == "1":
+            trading_dates.append(row[0])
+    trading_dates.sort(reverse=True)  # 从新到旧
+    return trading_dates
+
+
+def get_stock_list_baostock(day=None, a_share_only=True, try_days=10):
+    """
+    使用 baostock 获取股票列表（对应 query_all_stock）。
+    
+    参数:
+        day: 交易日，格式 'YYYY-MM-DD' 或 'YYYYMMDD'；为空则用 query_trade_dates 取最近交易日
+        a_share_only: 是否只保留 A 股（默认 True，过滤掉指数、B 股等）
+        try_days: 当 day 为空且 query_trade_dates 不可用时，向前尝试的日历天数
+    
+    返回:
+        list[str]: 股票代码列表，格式与项目一致，如 ['sh600000', 'sz000001']
+    """
+    from datetime import timedelta
+
+    login_baostock()
+
+    def query_one_day(day_str):
+        if len(day_str) == 8:  # YYYYMMDD
+            day_str = f"{day_str[:4]}-{day_str[4:6]}-{day_str[6:8]}"
+        rs = bs.query_all_stock(day=day_str)
+        if rs.error_code != '0':
+            raise RuntimeError(f"baostock query_all_stock 失败: {rs.error_msg}")
+        rows = []
+        while rs.next():
+            rows.append(rs.get_row_data())
+        return rows, day_str
+
+    def rows_to_codes(rows):
+        codes = []
+        for row in rows:
+            code = row[0]  # 如 'sh.600000' 或 'sz.000001'
+            code_flat = code.replace(".", "")
+            if not a_share_only:
+                codes.append(code_flat)
+                continue
+            if "." in code:
+                market, num = code.split(".", 1)
+            else:
+                continue
+            if market == "sh" and (num.startswith("60") or num.startswith("68")):
+                codes.append(code_flat)
+            elif market == "sz" and (num.startswith("00") or num.startswith("30")):
+                codes.append(code_flat)
+            elif market == "bj" and (num[0] in ("4", "8")):
+                codes.append(code_flat)
+        return codes
+
+    if day:
+        day_str = day if isinstance(day, str) else day.strftime("%Y-%m-%d")
+        rows, _ = query_one_day(day_str)
+        return rows_to_codes(rows) if rows else []
+
+    # 未指定日期：用 query_trade_dates 取最近交易日列表，按从新到旧依次尝试
+    # （今天虽是交易日，但盘中或未结算时 query_all_stock(今天) 可能仍为空）
+    for day_str in _get_trade_days_baostock():
+        rows, _ = query_one_day(day_str)
+        if rows:
+            return rows_to_codes(rows)
+
+    # 回退：query_trade_dates 失败或全部返回空时，按日历日向前尝试
+    for i in range(try_days):
+        d = datetime.now() - timedelta(days=i)
+        day_str = d.strftime("%Y-%m-%d")
+        rows, _ = query_one_day(day_str)
+        if rows:
+            return rows_to_codes(rows)
+    return []
+
+
 def fetch_kline_data_baostock(stock_code, start_date=None, end_date=None, 
                                frequency='d', adjustflag='3', verbose=False):
     """
