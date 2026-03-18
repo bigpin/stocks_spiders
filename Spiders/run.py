@@ -6,11 +6,18 @@ from datetime import datetime, timedelta
 import os
 import sys
 import subprocess
+import threading
+import time
 import argparse
 
 # 股票列表缓存配置
 STOCK_LIST_FILE = 'stock_list.txt'
 STOCK_LIST_CACHE_DAYS = 7  # 股票列表缓存天数（一周）
+# 股票估值缓存配置
+STOCK_DETAIL_FILE = 'stock_detail_data.csv'
+STOCK_DETAIL_CACHE_DAYS = 1  # 估值缓存天数（默认1天）
+STOCK_DETAIL_REFRESH_HOUR = 15
+STOCK_DETAIL_REFRESH_MINUTE = 30
 
 
 def is_stock_list_cache_valid(stock_file=STOCK_LIST_FILE, cache_days=STOCK_LIST_CACHE_DAYS):
@@ -113,11 +120,174 @@ process.start()
         log(f"[ERROR] 错误详情:\n{traceback.format_exc()}", also_print=False)
         return False
 
-def run_stock_detail_spider(stock_codes='sh603288,sz000858'):
-    """爬取指定股票的详细信息"""
-    cmdline.execute(f'scrapy crawl stock_detail -a stock_codes={stock_codes}'.split())
+def is_stock_detail_cache_valid(detail_file=STOCK_DETAIL_FILE, cache_days=STOCK_DETAIL_CACHE_DAYS):
+    """
+    检查估值缓存是否有效
+    """
+    if not os.path.exists(detail_file):
+        return False
+    if os.path.getsize(detail_file) == 0:
+        return False
+    file_mtime = datetime.fromtimestamp(os.path.getmtime(detail_file))
+    cache_expiry = datetime.now() - timedelta(days=cache_days)
+    return file_mtime > cache_expiry
 
-def run_stock_kline_spider_with_indicators(stock_codes, target_date=None):
+def should_refresh_stock_detail_cache(detail_file=STOCK_DETAIL_FILE, min_rows=4000):
+    """
+    收盘后固定刷新估值缓存：
+    - 文件不存在/为空：立即刷新
+    - 文件行数 < min_rows（不完整）：立即刷新
+    - 仅在 15:30 以后，且文件不是今天更新的情况下刷新
+    """
+    if not os.path.exists(detail_file) or os.path.getsize(detail_file) == 0:
+        return True
+    # 行数过少说明是残缺文件，强制刷新
+    try:
+        with open(detail_file, 'r', encoding='utf-8') as _f:
+            row_count = sum(1 for _ in _f)
+        if row_count < min_rows:
+            return True
+    except Exception:
+        return True
+    now = datetime.now()
+    file_mtime = datetime.fromtimestamp(os.path.getmtime(detail_file))
+    cache_expiry = now - timedelta(days=STOCK_DETAIL_CACHE_DAYS)
+    if file_mtime < cache_expiry:
+        return True
+    after_close = (now.hour > STOCK_DETAIL_REFRESH_HOUR or
+                   (now.hour == STOCK_DETAIL_REFRESH_HOUR and now.minute >= STOCK_DETAIL_REFRESH_MINUTE))
+    if not after_close:
+        return False
+    return file_mtime.date() != now.date()
+
+def _stock_detail_worker_init(script_dir):
+    """ProcessPoolExecutor 子进程初始化：将 Spiders/ 加入 sys.path，确保 baostock_helper 可导入。"""
+    import sys as _sys
+    if script_dir not in _sys.path:
+        _sys.path.insert(0, script_dir)
+
+
+def run_stock_detail_spider(stock_file_path, log_file=None, target_date=None):
+    """用 baostock 批量获取全市场估值数据（K线 + PE），写入 stock_detail_data.csv。"""
+    import csv as csv_module
+    from concurrent.futures import ProcessPoolExecutor, as_completed
+
+    def log(msg, also_print=True):
+        if log_file:
+            log_to_file(log_file, msg, also_print=also_print)
+        elif also_print:
+            print(msg)
+
+    script_dir   = os.path.dirname(os.path.abspath(__file__))
+    project_root = os.path.dirname(script_dir)
+    output_file_path = os.path.join(project_root, STOCK_DETAIL_FILE)
+
+    # 读取股票列表
+    codes = []
+    try:
+        if os.path.exists(stock_file_path):
+            with open(stock_file_path, 'r', encoding='utf-8') as f:
+                codes = [line.strip() for line in f if line.strip()]
+            log(f"[INFO] 估值抓取股票数量: {len(codes)}")
+        else:
+            log(f"[WARNING] 股票列表不存在: {stock_file_path}")
+            return False
+    except Exception as e:
+        log(f"[WARNING] 读取股票列表失败: {e}")
+        return False
+
+    if not codes:
+        log("[WARNING] 股票列表为空")
+        return False
+
+    if script_dir not in sys.path:
+        sys.path.insert(0, script_dir)
+
+    from spiders.baostock_helper import fetch_stock_fundamental_worker
+
+    CSV_FIELDS = [
+        'stock_id', 'stock_name', 'new_price', 'percentage_change', 'price_change',
+        'trading_volume', 'trading_value', 'highest_price', 'lowest_price',
+        'opening_price', 'closing_price', 'turnover_rate', 'pe', 'pb',
+    ]
+    FLUSH_EVERY = 200  # 每积攒 200 条写一次磁盘
+
+    def flush_rows(rows, file_obj, writer):
+        for r in rows:
+            writer.writerow([r.get(f, '') for f in CSV_FIELDS])
+        file_obj.flush()
+
+    start_time    = time.time()
+    total_ok      = 0
+    failed        = 0
+    done_count    = 0
+    last_log_time = start_time
+    pending       = []   # 待写缓冲
+
+    try:
+        # 写入模式：先写表头，之后追加
+        out_f  = open(output_file_path, 'w', encoding='utf-8', newline='')
+        writer = csv_module.writer(out_f)
+        writer.writerow(CSV_FIELDS)
+        out_f.flush()
+    except Exception as e:
+        log(f"[ERROR] 创建估值数据文件失败: {e}")
+        return False
+
+    try:
+        with ProcessPoolExecutor(
+            max_workers=8,
+            initializer=_stock_detail_worker_init,
+            initargs=(script_dir,),
+        ) as executor:
+            futures = {
+                executor.submit(fetch_stock_fundamental_worker, code, target_date): code
+                for code in codes
+            }
+            for future in as_completed(futures):
+                try:
+                    result = future.result(timeout=60)
+                    if result:
+                        pending.append(result)
+                        total_ok += 1
+                    else:
+                        failed += 1
+                except Exception:
+                    failed += 1
+
+                done_count += 1
+
+                # 每积攒 FLUSH_EVERY 条写一次磁盘
+                if len(pending) >= FLUSH_EVERY:
+                    flush_rows(pending, out_f, writer)
+                    pending.clear()
+
+                now = time.time()
+                if now - last_log_time >= 30:
+                    elapsed = int(now - start_time)
+                    log(f"[INFO] 估值抓取进度: {done_count}/{len(codes)}，已落盘 {total_ok} 只，已用时 {elapsed}s")
+                    last_log_time = now
+
+    except Exception as e:
+        log(f"[ERROR] 估值批量抓取异常: {e}")
+        import traceback
+        log(f"[ERROR] 错误详情:\n{traceback.format_exc()}", also_print=False)
+    finally:
+        # 剩余数据落盘，关闭文件
+        if pending:
+            flush_rows(pending, out_f, writer)
+        out_f.close()
+
+    elapsed = int(time.time() - start_time)
+    if total_ok == 0:
+        log("[WARNING] 估值数据抓取结果为空")
+        return False
+
+    log(f"[INFO] 估值数据写入完成: 成功 {total_ok} 只，失败 {failed} 只，耗时 {elapsed}s")
+    log(f"[INFO] 估值文件路径: {output_file_path}")
+    return True
+
+def run_stock_kline_spider_with_indicators(stock_codes, target_date=None, stock_file_path=None):
     """
     获取带技术指标的K线数据
     
@@ -130,16 +300,23 @@ def run_stock_kline_spider_with_indicators(stock_codes, target_date=None):
         settings = get_project_settings()
         settings.set('REQUEST_FINGERPRINTER_IMPLEMENTATION', '2.7')
         process = CrawlerProcess(settings)
-        process.crawl('stock_kline', 
-                     use_file='true',
-                     stock_codes=stock_codes,
-                     start_date=target_date,
-                     end_date=target_date,
-                     calc_indicators='true')
+        crawl_kwargs = dict(
+            use_file='true',
+            stock_codes=stock_codes,
+            start_date=target_date,
+            end_date=target_date,
+            calc_indicators='true'
+        )
+        if stock_file_path:
+            crawl_kwargs['stock_file'] = stock_file_path
+        process.crawl('stock_kline', **crawl_kwargs)
         process.start()
     else:
         # 默认今天，使用 cmdline
-        cmdline.execute(f'scrapy crawl stock_kline -a use_file=true -a stock_codes={stock_codes} -a calc_indicators=true'.split())
+        cmd = f'scrapy crawl stock_kline -a use_file=true -a stock_codes={stock_codes} -a calc_indicators=true'
+        if stock_file_path:
+            cmd += f' -a stock_file={stock_file_path}'
+        cmdline.execute(cmd.split())
 
 # def run_stock_kline_spider_with_yesterday(stock_codes):
 #     """获取昨天的K线数据"""
@@ -355,8 +532,18 @@ if __name__ == "__main__":
         log_to_file(log_file, f"[STEP 1.5] 股票列表缓存已过期或不存在，开始更新...")
         run_stock_list_spider(force=False, log_file=log_file)
     
-    # 运行获取股票详情的爬虫
-    # run_stock_detail_spider()
+    # 自动更新估值缓存（stock_detail_data.csv），收盘后固定刷新
+    detail_file_path = os.path.join(project_root, STOCK_DETAIL_FILE)
+    log_to_file(log_file, f"[STEP 1.7] 检查估值缓存...")
+    if should_refresh_stock_detail_cache(detail_file_path):
+        log_to_file(log_file, f"[STEP 1.7] 估值缓存需要刷新，开始更新...")
+        run_stock_detail_spider(stock_file_path, log_file=log_file, target_date=target_date)
+    else:
+        file_mtime = datetime.fromtimestamp(os.path.getmtime(detail_file_path)) if os.path.exists(detail_file_path) else None
+        if file_mtime:
+            log_to_file(log_file, f"[STEP 1.7] 估值缓存有效，上次更新: {file_mtime.strftime('%Y-%m-%d %H:%M:%S')}")
+        else:
+            log_to_file(log_file, f"[STEP 1.7] 估值缓存缺失但未到刷新时间，暂不更新")
     
     # 统计本次将要处理的股票代码数量（优先从股票列表文件统计）
     try:
@@ -382,9 +569,9 @@ if __name__ == "__main__":
     try:
         # 如果明确指定了日期参数，传入日期参数；否则使用默认（今天）
         if date_specified:
-            run_stock_kline_spider_with_indicators(STOCK_CODES, target_date=target_date)
+            run_stock_kline_spider_with_indicators(STOCK_CODES, target_date=target_date, stock_file_path=stock_file_path)
         else:
-            run_stock_kline_spider_with_indicators(STOCK_CODES)
+            run_stock_kline_spider_with_indicators(STOCK_CODES, stock_file_path=stock_file_path)
         log_to_file(log_file, "[STEP 2] 爬虫任务执行完成（正常退出）")
     except SystemExit as e:
         # cmdline.execute 可能会调用 sys.exit()，这是正常的

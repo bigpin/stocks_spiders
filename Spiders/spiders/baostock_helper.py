@@ -253,7 +253,9 @@ def fetch_kline_data_baostock(stock_code, start_date=None, end_date=None,
             'volume': 'volume',
             'amount': 'amount',
             'pctChg': 'change_rate',  # 涨跌幅
-            'turn': 'turnover'  # 换手率
+            'turn': 'turnover',  # 换手率
+            'tradestatus': 'trade_status',
+            'isST': 'is_st'
         }
         
         # 只保留需要的列
@@ -335,6 +337,117 @@ def get_stock_name_baostock(stock_code):
             return data_list[0][1] if len(data_list[0]) > 1 else None
         
         return None
+    except Exception:
+        return None
+
+
+def fetch_stock_fundamental_worker(stock_code, latest_date=None):
+    """
+    Worker for ProcessPoolExecutor: fetch latest K-line price + PE (via epsTTM) for one stock.
+    Returns a dict with all stock_detail fields, or None on failure.
+    Safe to use in spawned subprocesses (each process logs in independently).
+    """
+    import math
+    from datetime import timedelta
+
+    def safe_float(v, default=None):
+        if v is None or str(v).strip() == '':
+            return default
+        try:
+            f = float(v)
+            return default if math.isnan(f) else f
+        except (TypeError, ValueError):
+            return default
+
+    try:
+        login_baostock()
+        bs_code = convert_stock_code_to_baostock(stock_code)
+
+        # Resolve end_date
+        if latest_date is None:
+            end_dt = datetime.now()
+        elif len(str(latest_date)) == 8 and str(latest_date).isdigit():
+            end_dt = datetime.strptime(str(latest_date), "%Y%m%d")
+        else:
+            end_dt = datetime.strptime(str(latest_date)[:10], "%Y-%m-%d")
+        end_date = end_dt.strftime("%Y-%m-%d")
+        start_date = (end_dt - timedelta(days=10)).strftime("%Y-%m-%d")
+
+        # --- K-line: get the most recent trading day's data ---
+        rs = bs.query_history_k_data_plus(
+            bs_code,
+            "date,open,high,low,close,preclose,volume,amount,turn,pctChg",
+            start_date=start_date,
+            end_date=end_date,
+            frequency='d',
+            adjustflag='3',
+        )
+        k_fields = rs.fields
+        krows = []
+        while rs.next():
+            krows.append(dict(zip(k_fields, rs.get_row_data())))
+
+        if not krows:
+            return None
+
+        last = krows[-1]
+        close = safe_float(last.get('close'))
+        if not close or close <= 0:
+            return None
+
+        preclose = safe_float(last.get('preclose')) or close
+        price_change = round(close - preclose, 4)
+        pct_chg    = safe_float(last.get('pctChg'))
+        volume     = safe_float(last.get('volume'))
+        amount     = safe_float(last.get('amount'))
+        turn       = safe_float(last.get('turn'))
+        open_      = safe_float(last.get('open'))
+        high       = safe_float(last.get('high'))
+        low        = safe_float(last.get('low'))
+
+        # --- PE = close / epsTTM from quarterly profit data ---
+        pe = None
+        report_year = end_dt.year
+        for yr, qt in [
+            (report_year,     4),
+            (report_year,     3),
+            (report_year,     2),
+            (report_year,     1),
+            (report_year - 1, 4),
+            (report_year - 1, 3),
+            (report_year - 1, 2),
+            (report_year - 1, 1),
+        ]:
+            rs_p = bs.query_profit_data(code=bs_code, year=yr, quarter=qt)
+            p_fields = rs_p.fields
+            prows = []
+            while rs_p.next():
+                prows.append(dict(zip(p_fields, rs_p.get_row_data())))
+            if prows:
+                eps_ttm = safe_float(prows[0].get('epsTTM'))
+                if eps_ttm and eps_ttm > 0:
+                    pe = round(close / eps_ttm, 2)
+                break  # found the latest quarter, stop regardless of eps sign
+
+        # --- Stock name ---
+        name = get_stock_name_baostock(stock_code) or stock_code
+
+        return {
+            'stock_id':          stock_code,
+            'stock_name':        name,
+            'new_price':         close,
+            'percentage_change': pct_chg,
+            'price_change':      price_change,
+            'trading_volume':    round(volume / 100, 2) if volume else None,   # 股→手
+            'trading_value':     round(amount, 4) if amount else None,          # 元
+            'highest_price':     high,
+            'lowest_price':      low,
+            'opening_price':     open_,
+            'closing_price':     preclose,
+            'turnover_rate':     turn,
+            'pe':                pe,
+            'pb':                None,
+        }
     except Exception:
         return None
 

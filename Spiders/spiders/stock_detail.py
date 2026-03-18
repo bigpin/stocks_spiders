@@ -13,9 +13,21 @@ class StockDetailSpider(scrapy.Spider):
     name = "stock_detail"
     allowed_domains = ["eastmoney.com", "push2.eastmoney.com"]
     
-    def __init__(self, stock_codes=None, *args, **kwargs):
+    def __init__(self, stock_codes=None, use_file=False, stock_file='stock_list.txt', *args, **kwargs):
         super(StockDetailSpider, self).__init__(*args, **kwargs)
-        self.stock_codes = stock_codes.split(',') if stock_codes else ['sh603288', 'sz000858']
+        self._seen = 0
+        if use_file and use_file.lower() == 'true':
+            try:
+                with open(stock_file, 'r', encoding='utf-8') as f:
+                    self.stock_codes = [line.strip() for line in f if line.strip()]
+                if not self.stock_codes:
+                    self.logger.warning(f"股票代码文件 {stock_file} 为空，使用默认股票代码")
+                    self.stock_codes = ['sh603288', 'sz000858']
+            except FileNotFoundError:
+                self.logger.error(f"找不到股票代码文件 {stock_file}，使用默认股票代码")
+                self.stock_codes = ['sh603288', 'sz000858']
+        else:
+            self.stock_codes = stock_codes.split(',') if stock_codes else ['sh603288', 'sz000858']
     
     def start_requests(self):
         for stock_code in self.stock_codes:
@@ -58,9 +70,9 @@ class StockDetailSpider(scrapy.Spider):
                         divisor = FIELD_DIVISORS.get(item_field)
                         item[item_field] = value / divisor if divisor else value
                 
-                print(f"已获取股票信息: {item['stock_id']} - {item['stock_name']}")
-                for key, value in item.items():
-                    print(f"{key}: {value}")
+                self._seen += 1
+                if self._seen == 1 or self._seen % 200 == 0:
+                    self.logger.info(f"已抓取 {self._seen} 条估值数据，最新: {item.get('stock_id')} - {item.get('stock_name')}")
                 
                 yield item
             else:

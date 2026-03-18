@@ -151,3 +151,30 @@ INDICATORS_CONFIG = {
         'length': 12    # ROC周期
     }
 }
+
+# 信号过滤与质量控制配置
+SIGNAL_FILTERS = {
+    # 指标与统计所需最少历史K线天数（保障MA60/成交量均值等稳定）
+    'min_history_days': 60,
+    # 成功率统计窗口
+    'success_window_days': 14,
+    # 流动性与量价过滤
+    'liquidity': {
+        'avg_days': 20,               # 计算均值的窗口
+        'min_avg_amount': 1e8,        # 近20日平均成交额下限（单位：元）
+        'min_avg_turnover_rate': 1.0, # 近20日平均换手率下限（%）
+        'min_volume_ratio': 0.7,      # 当日成交量 / 20日均量 最低比例
+        'trend_volume_ratio': 1.2     # 趋势类信号要求放量比例
+    },
+    # 估值过滤（如无估值数据则跳过）
+    'valuation': {
+        'enable': True,
+        'pe_min': 0,
+        'pe_max': 80,
+        'pb_min': 0,
+        'pb_max': 8
+    },
+    # 其他过滤
+    'exclude_st': True,
+    'require_tradestatus': True
+}

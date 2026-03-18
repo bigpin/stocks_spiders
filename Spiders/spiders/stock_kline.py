@@ -1,5 +1,7 @@
 import scrapy
 import json
+import csv
+import os
 import pandas as pd
 from datetime import datetime, timedelta
 from items import EastMoneyItem
@@ -9,6 +11,7 @@ from .stock_config import (
     STOCK_PREFIX_MAP,
     HEADERS,
     INDICATORS_CONFIG,
+    SIGNAL_FILTERS,
     DATA_SOURCE,
     BAOSTOCK_FETCH_WORKERS,
 )
@@ -107,6 +110,7 @@ class StockKlineSpider(scrapy.Spider):
             
         self.calc_indicators = calc_indicators
         self.kline_data = {}  # 用于临时存储K线数据
+        self.fundamental_map = self._load_fundamental_cache()
         
         # 添加信号输出文件的路径
         self.signal_file = f'kdj_signals_{self.current_date.strftime("%Y%m%d")}.txt'
@@ -119,6 +123,190 @@ class StockKlineSpider(scrapy.Spider):
         self.conn = sqlite3.connect('stock_signals.db')
         self.cursor = self.conn.cursor()
         self.create_table()
+
+    def _normalize_stock_code(self, code):
+        if not code:
+            return None
+        code = str(code).strip()
+        if code.startswith(('sh', 'sz', 'bj')) and len(code) >= 8:
+            return code
+        if len(code) == 6 and code.isdigit():
+            if code.startswith(('60', '68')):
+                return f"sh{code}"
+            if code.startswith(('00', '30')):
+                return f"sz{code}"
+            if code.startswith(('83', '87', '92', '43', '82', '88')):
+                return f"bj{code}"
+        return code
+
+    def _parse_float(self, value):
+        if value is None:
+            return None
+        if isinstance(value, (int, float)):
+            return float(value)
+        text = str(value).strip()
+        if text in ("", "-", "--"):
+            return None
+        text = text.replace("%", "").replace(",", "")
+        try:
+            return float(text)
+        except ValueError:
+            return None
+
+    def _load_fundamental_cache(self):
+        project_root = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
+        candidates = [
+            os.path.join(os.getcwd(), "stock_detail_data.csv"),
+            os.path.join(os.getcwd(), "eastmoney_data.csv"),
+            os.path.join(project_root, "stock_detail_data.csv"),
+            os.path.join(project_root, "eastmoney_data.csv"),
+        ]
+        header_map = {
+            '股票代码': 'stock_code',
+            'stock_id': 'stock_code',
+            '市盈率': 'pe',
+            '市净率': 'pb',
+            '换手率': 'turnover_rate',
+            '成交额': 'trading_value',
+            '成交量(手)': 'trading_volume'
+        }
+        fundamental_map = {}
+        for path in candidates:
+            if not os.path.exists(path):
+                continue
+            try:
+                with open(path, 'r', encoding='utf-8') as f:
+                    reader = csv.reader(f)
+                    headers = next(reader, None)
+                    if not headers:
+                        continue
+                    indices = {header_map.get(h, h): i for i, h in enumerate(headers)}
+                    for row in reader:
+                        if not row:
+                            continue
+                        code_index = indices.get('stock_code')
+                        raw_code = row[code_index] if code_index is not None and code_index < len(row) else None
+                        stock_code = self._normalize_stock_code(raw_code)
+                        if not stock_code:
+                            continue
+                        pe_index = indices.get('pe')
+                        pb_index = indices.get('pb')
+                        pe = self._parse_float(row[pe_index]) if pe_index is not None and pe_index < len(row) else None
+                        pb = self._parse_float(row[pb_index]) if pb_index is not None and pb_index < len(row) else None
+                        fundamental_map[stock_code] = {
+                            'pe': pe,
+                            'pb': pb
+                        }
+            except Exception as e:
+                self.logger.warning(f"加载估值缓存失败: {path}, 错误: {str(e)}")
+                continue
+        if fundamental_map:
+            self.logger.warning(f"估值缓存加载完成: {len(fundamental_map)} 只股票")
+        return fundamental_map
+
+    def _passes_valuation_filters(self, stock_code):
+        if not SIGNAL_FILTERS['valuation'].get('enable', True):
+            return True
+        if not stock_code or not self.fundamental_map:
+            return True
+        data = self.fundamental_map.get(stock_code)
+        if not data:
+            return True
+        pe = data.get('pe')
+        pb = data.get('pb')
+        pe_min = SIGNAL_FILTERS['valuation'].get('pe_min')
+        pe_max = SIGNAL_FILTERS['valuation'].get('pe_max')
+        pb_min = SIGNAL_FILTERS['valuation'].get('pb_min')
+        pb_max = SIGNAL_FILTERS['valuation'].get('pb_max')
+        if pe is not None and pe_min is not None and pe < pe_min:
+            return False
+        if pe is not None and pe_max is not None and pe > pe_max:
+            return False
+        if pb is not None and pb_min is not None and pb < pb_min:
+            return False
+        if pb is not None and pb_max is not None and pb > pb_max:
+            return False
+        return True
+
+    def _check_valuation_filters(self, stock_code):
+        if not SIGNAL_FILTERS['valuation'].get('enable', True):
+            return True, 'disabled'
+        if not stock_code or not self.fundamental_map:
+            return True, 'missing'
+        data = self.fundamental_map.get(stock_code)
+        if not data:
+            return True, 'missing'
+        pe = data.get('pe')
+        pb = data.get('pb')
+        pe_min = SIGNAL_FILTERS['valuation'].get('pe_min')
+        pe_max = SIGNAL_FILTERS['valuation'].get('pe_max')
+        pb_min = SIGNAL_FILTERS['valuation'].get('pb_min')
+        pb_max = SIGNAL_FILTERS['valuation'].get('pb_max')
+        if pe is not None and pe_min is not None and pe < pe_min:
+            return False, 'blocked'
+        if pe is not None and pe_max is not None and pe > pe_max:
+            return False, 'blocked'
+        if pb is not None and pb_min is not None and pb < pb_min:
+            return False, 'blocked'
+        if pb is not None and pb_max is not None and pb > pb_max:
+            return False, 'blocked'
+        return True, 'passed'
+
+    def _passes_liquidity_filters(self, df, pos, signal_type):
+        liquidity_cfg = SIGNAL_FILTERS['liquidity']
+        avg_days = liquidity_cfg.get('avg_days', 20)
+        start = max(0, pos - avg_days + 1)
+        window = df.iloc[start:pos + 1]
+        if window.empty:
+            return False
+
+        avg_amount = None
+        if 'amount' in window.columns:
+            avg_amount = window['amount'].mean()
+            if avg_amount is not None and avg_amount < liquidity_cfg.get('min_avg_amount', 0):
+                return False
+
+        avg_turnover = None
+        if 'turnover' in window.columns:
+            avg_turnover = window['turnover'].mean()
+            if avg_turnover is not None and avg_turnover < liquidity_cfg.get('min_avg_turnover_rate', 0):
+                return False
+
+        if 'volume' in window.columns:
+            avg_volume = window['volume'].mean()
+            current_volume = df.iloc[pos]['volume']
+            if avg_volume and current_volume is not None and avg_volume > 0:
+                volume_ratio = current_volume / avg_volume
+                trend_signals = {
+                    'macd_golden_cross',
+                    'macd_zero_cross',
+                    'ma_golden_cross',
+                    'dmi_golden_cross',
+                    'dmi_adx_strong',
+                    'boll_width_expand'
+                }
+                required_ratio = liquidity_cfg.get('trend_volume_ratio') if signal_type in trend_signals else liquidity_cfg.get('min_volume_ratio')
+                if required_ratio and volume_ratio < required_ratio:
+                    return False
+        return True
+
+    def _passes_trade_status(self, df, pos):
+        if not SIGNAL_FILTERS.get('require_tradestatus', True):
+            return True
+        if 'trade_status' not in df.columns:
+            return True
+        value = df.iloc[pos].get('trade_status')
+        if value in (0, '0'):
+            return False
+        return True
+
+    def _is_st(self, df, pos):
+        if not SIGNAL_FILTERS.get('exclude_st', True):
+            return False
+        if 'is_st' not in df.columns:
+            return False
+        value = df.iloc[pos].get('is_st')
+        return value in (1, '1')
     
     def create_table(self):
         """创建数据库表"""
@@ -211,22 +399,36 @@ class StockKlineSpider(scrapy.Spider):
             self.logger.warning(f"开始拉取 {total} 只股票，{workers} 进程并行，每 50 只打印进度")
             results = {}
             done = 0
-            with ProcessPoolExecutor(max_workers=workers) as executor:
-                futures = {
-                    executor.submit(
-                        fetch_one_baostock_worker,
-                        code,
-                        self.start_date,
-                        self.end_date,
-                    ): code
-                    for code in self.stock_codes
-                }
-                for future in as_completed(futures):
-                    code = futures[future]
+            try:
+                with ProcessPoolExecutor(max_workers=workers) as executor:
+                    futures = {
+                        executor.submit(
+                            fetch_one_baostock_worker,
+                            code,
+                            self.start_date,
+                            self.end_date,
+                        ): code
+                        for code in self.stock_codes
+                    }
+                    for future in as_completed(futures):
+                        code = futures[future]
+                        try:
+                            results[code] = future.result()
+                        except Exception as e:
+                            self.logger.error(f"拉取 {code} 出错: {e}")
+                            results[code] = (code, None, None)
+                        done += 1
+                        if done == 1 or done % 50 == 0 or done == total:
+                            self.logger.warning(f"已拉取 {done}/{total} 只")
+            except PermissionError as e:
+                self.logger.warning(f"进程池不可用，改为串行拉取: {e}")
+                results = {}
+                done = 0
+                for code in self.stock_codes:
                     try:
-                        results[code] = future.result()
-                    except Exception as e:
-                        self.logger.error(f"拉取 {code} 出错: {e}")
+                        results[code] = fetch_one_baostock_worker(code, self.start_date, self.end_date)
+                    except Exception as e2:
+                        self.logger.error(f"拉取 {code} 出错: {e2}")
                         results[code] = (code, None, None)
                     done += 1
                     if done == 1 or done % 50 == 0 or done == total:
@@ -402,7 +604,7 @@ class StockKlineSpider(scrapy.Spider):
                     df = TechnicalIndicators.calculate_all(df, INDICATORS_CONFIG)
                     
                     # 分析信号
-                    kdj_analysis = self.analyze_signals(df)
+                    kdj_analysis = self.analyze_signals(df, stock_code=stock_code)
                     
                     # 只要有满足条件的信号写入文件
                     if kdj_analysis['recent_signals']:
@@ -546,9 +748,9 @@ class StockKlineSpider(scrapy.Spider):
                             # 同时保持控制台输出
                             self.logger.warning(f"股票 {stock_code} KDJ信号分析结果已写入文件: {self.signal_file}")
                         else:
-                            self.logger.warning(f"股票 {stock_code} 最近5天的信号类型数量 {len(signal_type_count)}，跳过输出")
+                            self.logger.warning(f"股票 {stock_code} 最近3天的信号类型数量 {len(signal_type_count)}，跳过输出")
                     else:
-                        self.logger.info(f"股票 {stock_code} 最近5天没有满足条件的高胜信号")
+                        self.logger.info(f"股票 {stock_code} 最近3天没有满足条件的高胜信号")
                 
                 # 结果数据
                 for index, row in df.iterrows():
@@ -585,8 +787,9 @@ class StockKlineSpider(scrapy.Spider):
         """
         try:
             # 检查数据量是否足够
-            if len(df) < 16:
-                self.logger.warning(f"股票 {stock_code} 的数据量不足16天，跳过分析")
+            min_history_days = SIGNAL_FILTERS.get('min_history_days', 60)
+            if len(df) < min_history_days:
+                self.logger.warning(f"股票 {stock_code} 的数据量不足{min_history_days}天，跳过分析")
                 return
             
             # 确保日期索引是datetime类型
@@ -601,7 +804,7 @@ class StockKlineSpider(scrapy.Spider):
                 df = TechnicalIndicators.calculate_all(df, INDICATORS_CONFIG)
                 
                 # 分析信号
-                kdj_analysis = self.analyze_signals(df)
+                kdj_analysis = self.analyze_signals(df, stock_code=stock_code)
                 
                 # 只要有满足条件的信号写入文件
                 if kdj_analysis['recent_signals']:
@@ -745,9 +948,9 @@ class StockKlineSpider(scrapy.Spider):
                         # 同时保持控制台输出
                         self.logger.warning(f"股票 {stock_code} KDJ信号分析结果已写入文件: {self.signal_file}")
                     else:
-                        self.logger.warning(f"股票 {stock_code} 最近5天的信号类型数量 {len(signal_type_count)}，跳过输出")
+                        self.logger.warning(f"股票 {stock_code} 最近3天的信号类型数量 {len(signal_type_count)}，跳过输出")
                 else:
-                    self.logger.info(f"股票 {stock_code} 最近5天没有满足条件的高胜信号")
+                    self.logger.info(f"股票 {stock_code} 最近3天没有满足条件的高胜信号")
             
             # 更新数据库中的最高价格
             self.update_price_extremes(stock_code, stock_name, df)
@@ -889,7 +1092,7 @@ class StockKlineSpider(scrapy.Spider):
             self.logger.error(f"更新价格极值时出错: {str(e)}")
             self.conn.rollback()
     
-    def analyze_signals(self, df):
+    def analyze_signals(self, df, stock_code=None):
         """分析多个技术指标的信号"""
         signals = []
         signal_stats = {
@@ -924,8 +1127,10 @@ class StockKlineSpider(scrapy.Spider):
         # 确保数据按日期排序
         df = df.sort_index()
         
+        min_history_days = SIGNAL_FILTERS.get('min_history_days', 60)
+        success_window_days = SIGNAL_FILTERS.get('success_window_days', 14)
         # 检查数据量是否足够
-        if len(df) < 16:  # 至少需要16天的数据
+        if len(df) < min_history_days:
             return {
                 'signal_stats': {},
                 'overall_success_rate': 0,
@@ -935,7 +1140,7 @@ class StockKlineSpider(scrapy.Spider):
                 'recent_signals': []
             }
         
-        for i in range(1, len(df)-16):
+        for i in range(1, len(df) - success_window_days):
             current_row = df.iloc[i]
             prev_row = df.iloc[i-1]
             
@@ -1028,18 +1233,19 @@ class StockKlineSpider(scrapy.Spider):
 
             # 处理当天的所有信号
             for signal, signal_type in signals_for_day:
-                signal_stats[signal_type]['total'] += 1
-                
                 # 检查未来14天是否有5%以上涨幅
-                future_prices_14 = df.iloc[i+1:i+15]['close']
-                max_future_return = round(((future_prices_14.max() - current_row['close']) / 
-                                   current_row['close'] * 100), 2)
-                
-                success = max_future_return >= 5
-                
-                if success:
-                    signal_stats[signal_type]['success'] += 1
-                    
+                future_prices = df.iloc[i+1:i+1+success_window_days]['close']
+                if len(future_prices) < success_window_days or future_prices.isna().all():
+                    max_future_return = None
+                    success = None
+                else:
+                    max_future_return = round(((future_prices.max() - current_row['close']) /
+                                       current_row['close'] * 100), 2)
+                    success = max_future_return >= 5
+                    signal_stats[signal_type]['total'] += 1
+                    if success:
+                        signal_stats[signal_type]['success'] += 1
+
                 signals.append({
                     'date': pd.to_datetime(df.index, format='%Y-%m-%d'),  # 修改日期格式
                     'signal_type': signal_type,
@@ -1078,6 +1284,10 @@ class StockKlineSpider(scrapy.Spider):
 
         # 最近信号检查部分
         recent_signals = []
+        valuation_checked = 0
+        valuation_blocked = 0
+        valuation_missing = 0
+        valuation_candidates = 0
         if len(df) >= 4:  # 改为4天以确保有足够数据计算3天的信号
             # 将索引转换为datetime类型
             df.index = pd.to_datetime(df.index)
@@ -1197,6 +1407,23 @@ class StockKlineSpider(scrapy.Spider):
 
                 # 处理当天的所有信号
                 for signal, signal_type in signals_for_day:
+                    valuation_candidates += 1
+                    current_pos = df.index.get_loc(last_3_days.index[i])
+                    if self._is_st(df, current_pos):
+                        continue
+                    if not self._passes_trade_status(df, current_pos):
+                        continue
+                    if not self._passes_liquidity_filters(df, current_pos, signal_type):
+                        continue
+                    passed, status = self._check_valuation_filters(stock_code)
+                    if status in ('passed', 'blocked'):
+                        valuation_checked += 1
+                    elif status == 'missing':
+                        valuation_missing += 1
+                    if status == 'blocked':
+                        valuation_blocked += 1
+                    if not passed:
+                        continue
                     if (signal_stats[signal_type]['total'] > 8 and 
                         success_rates[signal_type]['success_rate'] >= 60 and  
                         overall_success_rate >= 50):
@@ -1257,6 +1484,12 @@ class StockKlineSpider(scrapy.Spider):
                         
                         recent_signals.append(signal_data)
 
+        if valuation_checked > 0:
+            hit_rate = round(valuation_blocked / valuation_checked * 100, 2)
+            self.logger.warning(
+                f"股票 {stock_code} 估值过滤命中率: {hit_rate}% "
+                f"(过滤 {valuation_blocked}/{valuation_checked}, 缺失 {valuation_missing}, 触发 {valuation_candidates})"
+            )
         return {
             'signal_stats': success_rates,
             'overall_success_rate': overall_success_rate,
