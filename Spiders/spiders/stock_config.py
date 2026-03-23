@@ -176,5 +176,19 @@ SIGNAL_FILTERS = {
     },
     # 其他过滤
     'exclude_st': True,
-    'require_tradestatus': True
+    'require_tradestatus': True,
+    # 量能热度分（0–100，仅展示/排序，不增加过滤门槛）
+    'volume_heat': {
+        'enable': True,
+        'ma_short': 5,           # 量趋势：MA(短)/MA(长)
+        'ma_long': 20,
+        'ma_vol_recent': 3,      # 「放量」项：近 N 日均量 / MA20，降噪单日拉爆
+        'percentile_lookback': 120,
+        'percentile_min_samples': 30,  # 低于此样本数则量趋势退回固定区间线性映射
+        'use_percentile_trend': True,  # True：量趋势用历史分位数映射到满分
+        # 分项满分（量趋势 + 近N日放量 + 成交额）
+        'weights': {'trend': 40, 'vol_recent': 25, 'amount': 35},
+        # 流动性折扣：总分 × min(1, 近20日均成交额 / liquidity_floor)
+        'liquidity_floor': 1e8,
+    }
 }

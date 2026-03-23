@@ -24,6 +24,7 @@ from .baostock_helper import (
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from .technical_indicators import TechnicalIndicators
 import sqlite3
+import bisect
 
 class StockKlineSpider(scrapy.Spider):
     name = "stock_kline"
@@ -307,7 +308,132 @@ class StockKlineSpider(scrapy.Spider):
             return False
         value = df.iloc[pos].get('is_st')
         return value in (1, '1')
-    
+
+    def _compute_volume_heat_score(self, df):
+        """
+        最近交易热度评分 0–100（仅作参考，不参与过滤；每条分析结果在「总成功数」后输出一行）：
+        - 量趋势（默认 40）：优先用过去约 120 日 r_trend 的**历史分位数**映射到满分；样本不足则退回固定区间线性映射。
+        - 近 N 日放量（默认 25）：**近 3 日均量 / MA20**（非单日），并与 r_trend 做依赖约束：s_vol *= min(1, r_trend)。
+        - 成交活跃（默认 35）：MA(短)成交额 / MA(长)成交额；无成交额列时用「近短均量/再前一段均量」近似。
+        - 最后整体 × 流动性折扣：min(1, 近20日均成交额 / liquidity_floor)，冷门票不因异常放量虚高。
+        """
+        cfg = SIGNAL_FILTERS.get('volume_heat') or {}
+        if not cfg.get('enable', True):
+            return None, {}
+        ma_s = int(cfg.get('ma_short', 5))
+        ma_l = int(cfg.get('ma_long', 20))
+        ma_vr = int(cfg.get('ma_vol_recent', 3))
+        w = cfg.get('weights') or {}
+        w_trend = float(w.get('trend', 40))
+        w_vol = float(w.get('vol_recent', 25))
+        w_amt = float(w.get('amount', 35))
+        lookback = int(cfg.get('percentile_lookback', 120))
+        min_pct_samples = int(cfg.get('percentile_min_samples', 30))
+        use_pct = bool(cfg.get('use_percentile_trend', True))
+        liq_floor = float(cfg.get('liquidity_floor', 1e8))
+
+        if 'volume' not in df.columns or len(df) < ma_l + 1:
+            return None, {}
+        vol = pd.to_numeric(df['volume'], errors='coerce').fillna(0.0)
+        last_idx = len(df) - 1
+        start_l = max(0, last_idx - ma_l + 1)
+        vol_ma_l = float(vol.iloc[start_l:last_idx + 1].mean())
+        if vol_ma_l <= 0:
+            return None, {}
+        start_s = max(0, last_idx - ma_s + 1)
+        vol_ma_s = float(vol.iloc[start_s:last_idx + 1].mean())
+        r_trend = vol_ma_s / vol_ma_l
+
+        def _r_trend_at(j):
+            if j < ma_l - 1:
+                return None
+            ss = max(0, j - ma_s + 1)
+            sl = max(0, j - ma_l + 1)
+            vs = float(vol.iloc[ss:j + 1].mean())
+            vl = float(vol.iloc[sl:j + 1].mean())
+            if vl <= 0:
+                return None
+            return vs / vl
+
+        def _lin_map(x, lo, hi, out_max):
+            if hi <= lo:
+                return 0.0
+            t = (x - lo) / (hi - lo)
+            t = max(0.0, min(1.0, t))
+            return round(t * out_max, 2)
+
+        # 量趋势：分位数映射到 w_trend
+        hist_trend = []
+        if use_pct and last_idx >= ma_l - 1:
+            j0 = max(ma_l - 1, last_idx - lookback + 1)
+            for j in range(j0, last_idx + 1):
+                rt = _r_trend_at(j)
+                if rt is not None:
+                    hist_trend.append(rt)
+        if use_pct and len(hist_trend) >= min_pct_samples:
+            sh = sorted(hist_trend)
+            rank_frac = bisect.bisect_right(sh, r_trend) / len(sh)
+            s_trend = round(rank_frac * w_trend, 2)
+            trend_mode = 'percentile'
+        else:
+            s_trend = _lin_map(r_trend, 0.75, 1.25, w_trend)
+            trend_mode = 'linear_fallback'
+
+        # 近 ma_vr 日均量 / MA20，降噪单日拉爆
+        vr_start = max(0, last_idx - ma_vr + 1)
+        vol_ma_recent = float(vol.iloc[vr_start:last_idx + 1].mean())
+        r_vol_recent = vol_ma_recent / vol_ma_l
+        s_vol_raw = _lin_map(r_vol_recent, 0.8, 1.6, w_vol)
+        dep = min(1.0, r_trend)
+        s_vol = round(s_vol_raw * dep, 2)
+
+        s_amt = 0.0
+        r_amt = None
+        if 'amount' in df.columns:
+            amt = pd.to_numeric(df['amount'], errors='coerce').fillna(0.0)
+            amt_ma_l = float(amt.iloc[start_l:last_idx + 1].mean())
+            amt_ma_s = float(amt.iloc[start_s:last_idx + 1].mean())
+            if amt_ma_l > 0:
+                r_amt = amt_ma_s / amt_ma_l
+                s_amt = _lin_map(r_amt, 0.75, 1.25, w_amt)
+        else:
+            if last_idx >= ma_s + ma_l:
+                prev_start = max(0, last_idx - ma_s - ma_l + 1)
+                prev_end = last_idx - ma_s + 1
+                vol_prev = float(vol.iloc[prev_start:prev_end].mean())
+                if vol_prev > 0:
+                    r_amt = vol_ma_s / vol_prev
+                    s_amt = _lin_map(r_amt, 0.85, 1.35, w_amt)
+
+        total_base = s_trend + s_vol + s_amt
+        liq_factor = 1.0
+        if 'amount' in df.columns and liq_floor > 0:
+            amt = pd.to_numeric(df['amount'], errors='coerce').fillna(0.0)
+            avg_amt_20 = float(amt.iloc[start_l:last_idx + 1].mean())
+            liq_factor = min(1.0, avg_amt_20 / liq_floor)
+
+        total = round(min(100.0, total_base * liq_factor), 1)
+        detail = {
+            'vol_ma_ratio_5_20': round(r_trend, 3),
+            'volume_ratio_3d_ma20': round(r_vol_recent, 3),
+            'amount_ma_ratio_5_20': round(r_amt, 3) if r_amt is not None else None,
+            'score_trend': s_trend,
+            'score_vol_recent': s_vol,
+            'score_vol_recent_raw': s_vol_raw,
+            'trend_dependency': round(dep, 3),
+            'score_amount': s_amt,
+            'trend_mode': trend_mode,
+            'liquidity_discount': round(liq_factor, 3),
+            'raw_total_before_liq': round(total_base, 2),
+        }
+        return total, detail
+
+    def _recent_trade_heat_line(self, total):
+        """每条股票分析结果仅一行：最近交易热度评分（紧跟「总成功数」后）。"""
+        if total is None:
+            return None
+        return f"最近交易热度评分: {total}/100"
+
     def create_table(self):
         """创建数据库表"""
         self.cursor.execute('''
@@ -621,6 +747,10 @@ class StockKlineSpider(scrapy.Spider):
                             self.write_to_signal_file(f"总体成功率: {kdj_analysis['overall_success_rate']:.2f}%")
                             self.write_to_signal_file(f"总信号数: {kdj_analysis['total_signals']}")
                             self.write_to_signal_file(f"总成功数: {kdj_analysis['total_success']}")
+                            vh, _vhd = self._compute_volume_heat_score(df)
+                            heat_line = self._recent_trade_heat_line(vh)
+                            if heat_line:
+                                self.write_to_signal_file(heat_line)
                             
                             # 输出最近信号
                             self.write_to_signal_file("\n最近3天出现的高胜率信号：")
@@ -821,6 +951,10 @@ class StockKlineSpider(scrapy.Spider):
                         self.write_to_signal_file(f"总体成功率: {kdj_analysis['overall_success_rate']:.2f}%")
                         self.write_to_signal_file(f"总信号数: {kdj_analysis['total_signals']}")
                         self.write_to_signal_file(f"总成功数: {kdj_analysis['total_success']}")
+                        vh, _vhd = self._compute_volume_heat_score(df)
+                        heat_line = self._recent_trade_heat_line(vh)
+                        if heat_line:
+                            self.write_to_signal_file(heat_line)
                         
                         # 输出最近信号
                         self.write_to_signal_file("\n最近3天出现的高胜率信号：")
