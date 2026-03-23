@@ -68,7 +68,8 @@ python app.py
 
 ### 数据结构（单集合，report_id 关联形成完整报告）
 
-- `doc_type=stock_summary`：每个股票一条“报告头”（`_id == report_id == report_{report_date}_{stock_code}`）
+- `doc_type=stock_summary`：每个股票一条“报告头”（`_id == report_id == report_{report_date}_{stock_code}`）  
+  含 `overall_success_rate`、`total_signal_count`、`total_success_count`，以及 **`trade_heat_score` / `trade_heat_max`**（来自 txt 中「最近交易热度评分: x/y」，旧报告无此行则为 `null`）
 - `doc_type=signal_event`：每条“信号明细”（`report_id` 指向对应的 `stock_summary`，形成完整报告）
 
 ### 配置（不要把 AppSecret 提交到仓库）

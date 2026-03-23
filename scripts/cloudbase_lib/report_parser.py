@@ -21,6 +21,9 @@ _STOCK_HEADER_RE = re.compile(r"^股票\s+(?P<stock_name>.+?)\((?P<stock_code>[^
 _OVERALL_RATE_RE = re.compile(r"^总体成功率:\s*(?P<rate>[\d.]+)%\s*$")
 _TOTAL_SIGNALS_RE = re.compile(r"^总信号数:\s*(?P<count>\d+)\s*$")
 _TOTAL_SUCCESS_RE = re.compile(r"^总成功数:\s*(?P<count>\d+)\s*$")
+_TRADE_HEAT_RE = re.compile(
+    r"^最近交易热度评分:\s*(?P<score>[\d.]+)\s*/\s*(?P<max>[\d.]+)\s*$"
+)
 
 _EVENT_LINE_RE = re.compile(
     r"^股票:\s*(?P<stock_name>.+?)\((?P<stock_code>[^)]+)\),\s*"
@@ -80,6 +83,9 @@ class ParsedStockSection:
     overall_success_rate: Optional[float] = None
     total_signal_count: Optional[int] = None
     total_success_count: Optional[int] = None
+    # 与 stock_kline 输出「最近交易热度评分: xx/100」对应
+    trade_heat_score: Optional[float] = None
+    trade_heat_max: Optional[float] = None
     events: List[Dict[str, Any]] = None
 
     def __post_init__(self) -> None:
@@ -121,6 +127,12 @@ def parse_daily_report_lines(lines: List[str]) -> List[ParsedStockSection]:
         m = _TOTAL_SUCCESS_RE.match(line)
         if m:
             current.total_success_count = int(m.group("count"))
+            continue
+
+        m = _TRADE_HEAT_RE.match(line)
+        if m:
+            current.trade_heat_score = float(m.group("score"))
+            current.trade_heat_max = float(m.group("max"))
             continue
 
         m = _EVENT_LINE_RE.match(line)

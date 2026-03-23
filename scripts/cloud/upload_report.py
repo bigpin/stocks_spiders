@@ -6,6 +6,7 @@ Upload one daily analysis report (kdj_signals_YYYYMMDD.txt) to CloudBase DB (sin
 
 Docs written into collection (default: stock_signals):
   - stock_summary: _id == report_id == report_{report_date}_{stock_code}
+    含 trade_heat_score / trade_heat_max（来自报告「最近交易热度评分: x/y」，无则 null）
   - signal_event : _id == event_{report_date}_{stock_code}_{signal_date}_{signal_type}
                  report_id field links to stock_summary
 """
@@ -58,6 +59,8 @@ def build_docs(file_path: str) -> List[Dict[str, Any]]:
             "overall_success_rate": sec.overall_success_rate,
             "total_signal_count": sec.total_signal_count,
             "total_success_count": sec.total_success_count,
+            "trade_heat_score": sec.trade_heat_score,
+            "trade_heat_max": sec.trade_heat_max,
             "source_file": source_file,
             "ingested_at": ingested_at,
         }
