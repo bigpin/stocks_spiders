@@ -1149,18 +1149,20 @@ select.control-input optgroup {
 }
 
 .calc-table td {
-    padding: 12px 14px;
+    padding: 6px 4px;
     border-bottom: 1px solid rgba(226, 232, 240, 0.5);
-    transition: all 0.2s;
+    border-left: 3px solid transparent;
+    transition: all 0.15s;
+    min-width: 72px;
+    line-height: 1.2;
 }
 
 .calc-table tr {
-    transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+    transition: all 0.15s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
-.calc-table tr:hover {
-    background: linear-gradient(90deg, rgba(102, 126, 234, 0.05) 0%, rgba(118, 75, 162, 0.03) 100%);
-    transform: scale(1.01);
+.calc-table tr:hover td {
+    filter: brightness(0.96);
 }
 .calc-table .text-right {
     text-align: right;
@@ -1321,7 +1323,6 @@ select.control-input optgroup {
 .data-list-table tbody tr:hover {
     background: var(--bg-hover);
     border-left-color: var(--primary-color);
-}
     background: rgba(255, 255, 255, 0.7);
     position: relative;
 }

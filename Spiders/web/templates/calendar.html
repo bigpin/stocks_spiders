@@ -324,6 +324,17 @@
                     </div>
                     <div class="controls-row">
                         <div class="control-group">
+                            <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 6px;">
+                                <input type="checkbox" id="filter-enable-force-sell" style="width: 16px; height: 16px;">
+                                <div class="control-label" style="margin: 0;">未触达时强制持有后卖出</div>
+                            </div>
+                            <div style="display: flex; align-items: center; gap: 8px;">
+                                <span style="font-size:12px;color:#666;white-space:nowrap;">持有天数</span>
+                                <input type="number" id="filter-force-sell-days" class="control-input" value="30" min="1" max="999" style="width:70px;" disabled>
+                                <span style="font-size:11px;color:#999;">天后按收盘价卖出</span>
+                            </div>
+                        </div>
+                        <div class="control-group">
                             <div class="control-label">操作</div>
                             <div style="display: flex; gap: 8px;">
                                 <button class="btn btn-primary" onclick="updateCalc()" style="flex: 1;">应用筛选</button>
@@ -415,10 +426,34 @@
 
                 <div class="tab-content" id="tab-matrix">
                     <div class="calc-panel">
-                        <div class="calc-title">📊 止盈止损收益矩阵（本金1万元/股票）</div>
+                        <div class="calc-title">📊 止盈止损触达率矩阵</div>
+                        <div style="font-size:12px;color:#666;margin-bottom:10px;line-height:1.7;">
+                            每格显示：<b style="color:#1565c0;">触达率</b>（窗口内触及止盈或止损的信号占比）
+                            + 触发中的 <span style="color:#e53935;">止盈%</span> / <span style="color:#43a047;">止损%</span>
+                            + <b>触发均值</b>（止盈固定 +pt%，止损固定 sl%，加权平均）。
+                            未在窗口内触发的股票不计入均值，仅计入触达率分母。
+                        </div>
+                        <div style="font-size:12px;margin-bottom:12px;display:flex;gap:16px;flex-wrap:wrap;align-items:center;">
+                            <span style="display:inline-flex;align-items:center;gap:4px;">
+                                <span style="display:inline-block;width:12px;height:12px;background:#c8e6c9;border:1px solid #ccc;border-radius:2px;"></span>
+                                触达率≥60% 且止盈率≥60%（高质量）
+                            </span>
+                            <span style="display:inline-flex;align-items:center;gap:4px;">
+                                <span style="display:inline-block;width:12px;height:12px;background:#ffcdd2;border:1px solid #ccc;border-radius:2px;"></span>
+                                触达率≥60% 但止损多（止盈率&lt;40%）
+                            </span>
+                            <span style="display:inline-flex;align-items:center;gap:4px;">
+                                <span style="display:inline-block;width:12px;height:12px;background:#fff3cd;border:1px solid #ccc;border-radius:2px;"></span>
+                                综合得分 Top 10
+                            </span>
+                            <span style="display:inline-flex;align-items:center;gap:4px;">
+                                <span style="display:inline-block;width:12px;height:12px;background:#f5f5f5;border:1px solid #ccc;border-radius:2px;"></span>
+                                触达率&lt;15%（参考意义有限）
+                            </span>
+                        </div>
                         <div class="calc-summary" id="calc-summary">
                             <div class="stat-item">
-                                <div class="stat-label">总股票数</div>
+                                <div class="stat-label">总信号数</div>
                                 <div class="stat-value" id="calc-total-stocks">-</div>
                             </div>
                         </div>

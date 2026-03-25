@@ -293,98 +293,94 @@ function bindElemEvents(el, rec, kind) {
         renderTimeline();
     });
 }
-function calculateProfitForStock(rec, profitTarget, stopLoss) {
+// options: { forceSell: bool, forceSellDays: number }
+function calculateProfitForStock(rec, profitTarget, stopLoss, options) {
     if (!rec.buyPrice) return null;
-    
-    const buyPrice = rec.buyPrice;
+
+    const forceSell     = options && options.forceSell;
+    const forceSellDays = options && options.forceSellDays > 0 ? options.forceSellDays : 30;
+
+    const buyPrice    = rec.buyPrice;
     const profitPrice = buyPrice * (1 + profitTarget / 100);
-    const lossPrice = buyPrice * (1 + stopLoss / 100);
-    
-    // 如果有每日价格数据，使用每日价格数据计算（更准确）
+    const lossPrice   = buyPrice * (1 + stopLoss  / 100);
+
     if (rec.dailyPrices && rec.dailyPrices.length > 0) {
-        for (let i = 0; i < rec.dailyPrices.length; i++) {
-            const dayData = rec.dailyPrices[i];
-            const high = dayData.high;
-            const low = dayData.low;
-            
-            // 检查是否触及止盈
-            const hitProfit = high && high >= profitPrice;
-            // 检查是否触及止损
-            const hitLoss = low && low <= lossPrice;
-            
+        // ── 逐日路径（有每日 OHLC 数据）──────────────────────────────────
+        // 先找到强制卖出截止点：forceSellDays 对应的 dailyPrices 下标
+        // days_from_signal 是信号发出后的第 N 个交易日
+        let forceSellIdx = rec.dailyPrices.length - 1;  // 默认窗口最后一天
+        if (forceSell) {
+            for (let i = 0; i < rec.dailyPrices.length; i++) {
+                if ((rec.dailyPrices[i].days_from_signal || 0) >= forceSellDays) {
+                    forceSellIdx = i;
+                    break;
+                }
+            }
+        }
+
+        const scanEnd = forceSell ? forceSellIdx : rec.dailyPrices.length - 1;
+
+        for (let i = 0; i <= scanEnd; i++) {
+            const dayData   = rec.dailyPrices[i];
+            const high      = dayData.high;
+            const low       = dayData.low;
+            const hitProfit = high != null && high >= profitPrice;
+            const hitLoss   = low  != null && low  <= lossPrice;
+
             if (hitProfit && hitLoss) {
-                // 如果同一天都触及，需要判断哪个先触发
-                const openPrice = dayData.open || buyPrice;
-                
-                // 1. 优先检查开盘价是否直接触发
+                // 同日双触发：用开盘价优先判断，开盘在中间时保守取止损
+                const openPrice = dayData.open != null ? dayData.open : buyPrice;
                 if (openPrice <= lossPrice) {
-                    // 开盘价 <= 止损价，开盘就触发止损（即使后面涨到止盈价）
-                    return { profit: stopLoss, days: dayData.days_from_signal, type: "loss" };
+                    return { profit: stopLoss,    days: dayData.days_from_signal, type: "loss" };
                 }
                 if (openPrice >= profitPrice) {
-                    // 开盘价 >= 止盈价，开盘就触发止盈（即使后面跌到止损价）
                     return { profit: profitTarget, days: dayData.days_from_signal, type: "profit" };
                 }
-                
-                // 2. 开盘价在中间（止损价 < 开盘价 < 止盈价），判断盘中先触及哪个
-                // 使用相对距离判断（更合理）
-                const profitRange = profitPrice - buyPrice;  // 止盈幅度
-                const lossRange = buyPrice - lossPrice;      // 止损幅度
-                
-                // 计算距离止盈和止损的相对比例
-                const profitDistanceRatio = (profitPrice - openPrice) / profitRange;  // 距离止盈的比例（0-1）
-                const lossDistanceRatio = (openPrice - lossPrice) / lossRange;       // 距离止损的比例（0-1）
-                
-                // 距离比例更小的先触发（更接近目标）
-                if (profitDistanceRatio <= lossDistanceRatio) {
-                    // 更接近止盈价，先触发止盈
-                    return { profit: profitTarget, days: dayData.days_from_signal, type: "profit" };
-                } else {
-                    // 更接近止损价，先触发止损
-                    return { profit: stopLoss, days: dayData.days_from_signal, type: "loss" };
-                }
+                // 开盘在中间，盘中顺序不确定 → 保守：先止损
+                return { profit: stopLoss, days: dayData.days_from_signal, type: "loss_ambiguous" };
             } else if (hitProfit) {
-                // 只触及止盈
                 return { profit: profitTarget, days: dayData.days_from_signal, type: "profit" };
             } else if (hitLoss) {
-                // 只触及止损
                 return { profit: stopLoss, days: dayData.days_from_signal, type: "loss" };
             }
         }
-        // 如果遍历完所有天数都没有触及，返回null
-        return null;
+
+        // 遍历完仍未触发
+        if (forceSell) {
+            // 强制卖出：用截止日的收盘价计算盈亏
+            const sellDay   = rec.dailyPrices[forceSellIdx];
+            const sellClose = sellDay.close != null ? sellDay.close : buyPrice;
+            const sellReturn = (sellClose - buyPrice) / buyPrice * 100;
+            return { profit: sellReturn, days: sellDay.days_from_signal, type: "force_sell" };
+        }
+        // 不强制卖出 → miss
+        const windowDays = rec.dailyPrices[rec.dailyPrices.length - 1].days_from_signal || 0;
+        return { profit: null, days: windowDays, type: "miss" };
+
     } else {
-        // 如果没有每日价格数据，使用旧逻辑（向后兼容）
+        // ── 旧路径（只有聚合字段，无逐日 OHLC）────────────────────────────
         const highPrice = rec.highPrice;
-        const lowPrice = rec.lowPrice;
-        const highDays = rec.highDays || 999999;
-        const lowDays = rec.lowDays || 999999;
-        
-        const canReachProfit = highPrice && highPrice >= profitPrice;
-        const canReachLoss = lowPrice && lowPrice <= lossPrice;
-        
-        if (!canReachProfit && !canReachLoss) {
-            return null;
+        const lowPrice  = rec.lowPrice;
+        const highDays  = rec.highDays != null ? rec.highDays : 999999;
+        const lowDays   = rec.lowDays  != null ? rec.lowDays  : 999999;
+
+        const canReachProfit = highPrice != null && highPrice >= profitPrice;
+        const canReachLoss   = lowPrice  != null && lowPrice  <= lossPrice;
+
+        if (canReachProfit && canReachLoss) {
+            if (highDays < lowDays) {
+                return { profit: profitTarget, days: highDays, type: "profit" };
+            } else {
+                return { profit: stopLoss, days: lowDays, type: "loss" };
+            }
+        } else if (canReachProfit) {
+            return { profit: profitTarget, days: highDays, type: "profit" };
+        } else if (canReachLoss) {
+            return { profit: stopLoss, days: lowDays, type: "loss" };
         }
-        
-        let firstHit = null;
-        let firstHitDays = 999999;
-        
-        if (canReachProfit && highDays < firstHitDays) {
-            firstHit = "profit";
-            firstHitDays = highDays;
-        }
-        if (canReachLoss && lowDays < firstHitDays) {
-            firstHit = "loss";
-            firstHitDays = lowDays;
-        }
-        
-        if (firstHit === "profit") {
-            return { profit: profitTarget, days: firstHitDays, type: "profit" };
-        } else if (firstHit === "loss") {
-            return { profit: stopLoss, days: firstHitDays, type: "loss" };
-        }
-        return null;
+
+        // 旧路径无逐日收盘，强制卖出无法精确计算 → 统一 miss
+        return { profit: null, days: 0, type: "miss" };
     }
 }
 function getFilteredRecords() {
@@ -475,6 +471,9 @@ function resetCalcFilters() {
     document.getElementById("filter-buy-day-change-max").disabled = true;
     document.getElementById("filter-next-day-change-min").disabled = true;
     document.getElementById("filter-next-day-change-max").disabled = true;
+    document.getElementById("filter-enable-force-sell").checked = false;
+    document.getElementById("filter-force-sell-days").value = "30";
+    document.getElementById("filter-force-sell-days").disabled = true;
     updateSliderValue("filter-buy-day-change-min", "filter-buy-day-change-min-value");
     updateSliderValue("filter-buy-day-change-max", "filter-buy-day-change-max-value");
     updateSliderValue("filter-next-day-change-min", "filter-next-day-change-min-value");
@@ -485,18 +484,16 @@ function updateCalc() {
     const filteredRecords = getFilteredRecords();
     const profitTargets = [];
     const stopLosses = [];
-    for (let i = 2; i <= 30; i += 2) {
-        profitTargets.push(i);
-    }
-    for (let i = -2; i >= -30; i -= 2) {
-        stopLosses.push(i);
-    }
+    for (let i = 2; i <= 30; i += 2)  { profitTargets.push(i); }
+    for (let i = -2; i >= -30; i -= 2) { stopLosses.push(i); }
+
     const thead = document.getElementById("calc-table-header");
-    const tbody = document.getElementById("calc-table-body");
+    const tbody  = document.getElementById("calc-table-body");
     thead.innerHTML = "";
-    tbody.innerHTML = "";
+    tbody.innerHTML  = "";
+
     const headerRow = document.createElement("tr");
-    headerRow.innerHTML = "<th>止损\\止盈</th>";
+    headerRow.innerHTML = "<th>止损 \\ 止盈</th>";
     profitTargets.forEach(pt => {
         const th = document.createElement("th");
         th.className = "text-center";
@@ -504,130 +501,314 @@ function updateCalc() {
         headerRow.appendChild(th);
     });
     thead.appendChild(headerRow);
-    let totalStocks = 0;
-    filteredRecords.forEach(rec => {
-        if (rec.buyPrice) totalStocks++;
-    });
+
+    // totalStocks = 所有有买入价的记录数（全程固定分母）
+    const totalStocks = filteredRecords.filter(r => r.buyPrice).length;
     document.getElementById("calc-total-stocks").textContent = totalStocks;
-    const results = [];
-    const stockDetails = [];
+
+    if (totalStocks === 0) return;
+
+    // ── 读取强制卖出选项 ─────────────────────────────────────────────────
+    const forceSellEnabled = document.getElementById("filter-enable-force-sell").checked;
+    const forceSellDays    = parseInt(document.getElementById("filter-force-sell-days").value) || 30;
+    const calcOptions      = { forceSell: forceSellEnabled, forceSellDays };
+
+    // ── 构建每格统计 ─────────────────────────────────────────────────────
+    const cellData = [];
+
+    stopLosses.forEach((sl) => {
+        const rowData = [];
+        profitTargets.forEach((pt) => {
+            let profitCount = 0, lossCount = 0, missCount = 0, forceSellCount = 0, ambigCount = 0;
+            let totalProfitDays = 0, totalLossDays = 0;
+            let totalForceSellProfit = 0, totalForceSellDays = 0;
+            const hitStocks       = [];   // 触发止盈/止损的个股
+            const forceSellStocks = [];   // 强制卖出的个股
+            const missStocks      = [];   // 未触发（强制卖出关闭时）
+
+            filteredRecords.forEach(rec => {
+                if (!rec.buyPrice) return;
+                const result = calculateProfitForStock(rec, pt, sl, calcOptions);
+                if (result === null) return;
+
+                const isLoss = result.type === "loss" || result.type === "loss_ambiguous";
+
+                if (result.type === "profit") {
+                    profitCount++;
+                    totalProfitDays += (result.days || 0);
+                    hitStocks.push({ code: rec.stockCode || "-", name: rec.stockName || "-",
+                                     profit: result.profit, days: result.days, type: "profit" });
+                } else if (isLoss) {
+                    lossCount++;
+                    totalLossDays += (result.days || 0);
+                    if (result.type === "loss_ambiguous") ambigCount++;
+                    hitStocks.push({ code: rec.stockCode || "-", name: rec.stockName || "-",
+                                     profit: result.profit, days: result.days, type: result.type });
+                } else if (result.type === "force_sell") {
+                    forceSellCount++;
+                    totalForceSellProfit += result.profit;
+                    totalForceSellDays   += (result.days || 0);
+                    forceSellStocks.push({ code: rec.stockCode || "-", name: rec.stockName || "-",
+                                           profit: result.profit, days: result.days, type: "force_sell" });
+                } else if (result.type === "miss") {
+                    missCount++;
+                    missStocks.push({ code: rec.stockCode || "-", name: rec.stockName || "-" });
+                }
+            });
+
+            const hitCount = profitCount + lossCount;
+            // 触达率 = 止盈+止损 / 总信号（不含强制卖出）
+            const hitRate  = totalStocks > 0 ? hitCount / totalStocks * 100 : 0;
+            const profitRateAmongHits = hitCount > 0 ? profitCount / hitCount * 100 : 0;
+            const lossRateAmongHits   = hitCount > 0 ? lossCount   / hitCount * 100 : 0;
+            // 触发股票均值（确定性）
+            const avgHitProfit = hitCount > 0
+                ? (profitCount * pt + lossCount * sl) / hitCount
+                : null;
+            const avgProfitDays  = profitCount    > 0 ? totalProfitDays    / profitCount    : null;
+            const avgLossDays    = lossCount      > 0 ? totalLossDays      / lossCount      : null;
+            const avgForceSellP  = forceSellCount > 0 ? totalForceSellProfit / forceSellCount : null;
+            const avgForceSellD  = forceSellCount > 0 ? totalForceSellDays   / forceSellCount : null;
+            // 全量均值（触发 + 强制卖出）
+            const totalWithResult = hitCount + forceSellCount;
+            const totalProfit     = (hitCount > 0 ? profitCount * pt + lossCount * sl : 0)
+                                  + totalForceSellProfit;
+            const avgAllProfit    = totalWithResult > 0 ? totalProfit / totalWithResult : null;
+
+            rowData.push({
+                hitCount, profitCount, lossCount, missCount, forceSellCount, ambigCount,
+                hitRate, profitRateAmongHits, lossRateAmongHits,
+                avgHitProfit, avgProfitDays, avgLossDays,
+                avgForceSellP, avgForceSellD,
+                avgAllProfit, totalWithResult,
+                hitStocks, forceSellStocks, missStocks,
+                forceSellEnabled,
+            });
+        });
+        cellData.push(rowData);
+    });
+
+    // ── 排序：综合得分（触达率 × 止盈率，强制卖出开启时改用全量均值）───
+    const allScores = [];
+    cellData.forEach((row, r) => {
+        row.forEach((d, c) => {
+            if (d.hitCount > 0 || d.forceSellCount > 0) {
+                const score = d.forceSellEnabled
+                    ? (d.avgAllProfit != null ? d.avgAllProfit : -999)
+                    : d.hitRate * d.profitRateAmongHits * (d.avgHitProfit >= 0 ? 1 : -1);
+                allScores.push({ score, r, c });
+            }
+        });
+    });
+    allScores.sort((a, b) => b.score - a.score);
+    const top10Set    = new Set(allScores.slice(0, 10).map(x => x.r + "_" + x.c));
+    const bottom10Set = new Set(allScores.slice(-10).map(x => x.r + "_" + x.c));
+
+    // ── 渲染 ─────────────────────────────────────────────────────────────
     stopLosses.forEach((sl, slIdx) => {
         const row = document.createElement("tr");
         const labelCell = document.createElement("td");
-        labelCell.textContent = sl + "%";
+        labelCell.textContent  = sl + "%";
         labelCell.style.fontWeight = "600";
         row.appendChild(labelCell);
-        const rowResults = [];
-        const rowDetails = [];
+
         profitTargets.forEach((pt, ptIdx) => {
-            let totalProfit = 0;
-            let count = 0;
-            let profitCount = 0;
-            let lossCount = 0;
-            const stocks = [];
-            filteredRecords.forEach(rec => {
-                const result = calculateProfitForStock(rec, pt, sl);
-                if (result !== null) {
-                    totalProfit += result.profit;
-                    count++;
-                    if (result.type === "profit") {
-                        profitCount++;
-                    } else {
-                        lossCount++;
-                    }
-                    stocks.push({
-                        code: rec.stockCode || "-",
-                        name: rec.stockName || "-",
-                        profit: result.profit,
-                        days: result.days,
-                        type: result.type
-                    });
-                }
-            });
-            const avgProfit = count > 0 ? totalProfit / count : null;
-            rowResults.push(avgProfit);
-            rowDetails.push(stocks);
+            const d    = cellData[slIdx][ptIdx];
             const cell = document.createElement("td");
             cell.style.cursor = "pointer";
-            cell.title = "";
-            if (avgProfit !== null) {
-                const hitRate = totalStocks > 0 ? (profitCount + lossCount) / totalStocks : 0;
-                const confidenceFilter = parseFloat(document.getElementById("filter-confidence").value) || 80;
-                const meetsConfidence = hitRate * 100 >= confidenceFilter;
-                cell.className = "text-center " + (avgProfit >= 0 ? "profit-positive" : "profit-negative");
-                if (meetsConfidence) {
-                    cell.style.backgroundColor = "#e1bee7";
-                }
-                const profitSpan = '<span style="color:#b71c1c;opacity:0.7;font-size:11px;">' + profitCount + '</span>';
-                const lossSpan = '<span style="color:#1b5e20;opacity:0.7;font-size:11px;">' + lossCount + '</span>';
-                cell.innerHTML = (avgProfit > 0 ? "+" : "") + avgProfit.toFixed(2) + "% (" + profitSpan + ", " + lossSpan + ")";
-                cell.dataset.stocks = JSON.stringify(stocks);
-                cell.addEventListener("mouseenter", function(e) {
-                    const stocksData = JSON.parse(this.dataset.stocks || "[]");
-                    if (stocksData.length > 0) {
-                        let html = '<div class="tooltip-title">股票详情（' + stocksData.length + "只）</div>";
-                        html += '<div class="tooltip-stocks">';
-                        const displayCount = Math.min(9, stocksData.length);
-                        for (let i = 0; i < displayCount; i++) {
-                            const s = stocksData[i];
-                            html += '<div class="tooltip-stock-item">';
-                            html += '<div class="tooltip-stock-code">' + s.code + "</div>";
-                            html += '<div class="tooltip-stock-name">' + (s.name || "-") + "</div>";
-                            html += '<div class="tooltip-stock-info">持有: ' + s.days + " 天</div>";
-                            html += '<div class="tooltip-stock-info" style="color:' + (s.profit >= 0 ? "#e53935" : "#43a047") + ';">收益: ' + (s.profit > 0 ? "+" : "") + s.profit.toFixed(2) + "%</div>";
-                            html += '<div class="tooltip-stock-info">' + (s.type === "profit" ? "止盈" : "止损") + "</div>";
-                            html += "</div>";
-                        }
-                        html += "</div>";
-                        if (stocksData.length > 9) {
-                            html += '<div style="margin-top:8px;font-size:11px;color:#999;">还有 ' + (stocksData.length - 9) + " 只股票，滚动查看</div>";
-                        }
-                        showTooltip(html, e.clientX, e.clientY);
-                    }
-                });
-                cell.addEventListener("mouseleave", function() {
-                    hideTooltip();
-                });
-            } else {
+            const key  = slIdx + "_" + ptIdx;
+
+            const hasAnyResult = d.hitCount > 0 || d.forceSellCount > 0;
+            if (!hasAnyResult) {
                 cell.className = "text-center";
-                cell.textContent = "-";
+                cell.innerHTML = '<div style="color:#ccc;font-size:11px;">-</div>';
+                row.appendChild(cell);
+                return;
             }
+
+            // ── 取参考均值（用于正负着色的统一判断）────────────────────────
+            const refAvg = d.forceSellEnabled ? d.avgAllProfit : d.avgHitProfit;
+            const isPositive = refAvg != null && refAvg > 0;
+            const isNegative = refAvg != null && refAvg < 0;
+
+            // ── 着色逻辑 ─────────────────────────────────────────────────
+            // 底色：先按正/负给一个基础色，再由强规则覆盖
+            let bgColor = isPositive ? "#f1f8e9" : isNegative ? "#fff3f3" : "";
+            let borderLeft = isPositive ? "3px solid #81c784" : isNegative ? "3px solid #e57373" : "3px solid transparent";
+            let fw = "400";
+
+            if (d.forceSellEnabled) {
+                const avg = d.avgAllProfit;
+                if (avg != null && avg > 2 && d.profitRateAmongHits >= 50) {
+                    bgColor = "#c8e6c9"; borderLeft = "3px solid #4caf50"; fw = "700";
+                } else if (avg != null && avg < 0) {
+                    bgColor = "#ffcdd2"; borderLeft = "3px solid #e57373";
+                } else if (top10Set.has(key)) {
+                    bgColor = "#fff3cd"; borderLeft = "3px solid #ffc107"; fw = "700";
+                } else if (bottom10Set.has(key)) {
+                    bgColor = "#f8d7da"; borderLeft = "3px solid #e57373"; fw = "700";
+                }
+            } else {
+                if (d.hitRate >= 60 && d.profitRateAmongHits >= 60) {
+                    bgColor = "#c8e6c9"; borderLeft = "3px solid #4caf50"; fw = "700";
+                } else if (d.hitRate >= 60 && d.profitRateAmongHits < 40) {
+                    bgColor = "#ffcdd2"; borderLeft = "3px solid #e57373";
+                } else if (d.hitRate < 15) {
+                    bgColor = "#f5f5f5"; borderLeft = "3px solid #ddd";
+                } else if (top10Set.has(key)) {
+                    bgColor = "#fff3cd"; borderLeft = "3px solid #ffc107"; fw = "700";
+                } else if (bottom10Set.has(key)) {
+                    bgColor = "#f8d7da"; borderLeft = "3px solid #e57373"; fw = "700";
+                }
+            }
+
+            cell.className = "text-center";
+            cell.style.backgroundColor = bgColor;
+            cell.style.borderLeft = borderLeft;
+            cell.style.fontWeight = fw;
+            cell.style.padding = "4px 3px";
+
+            // ── 格子文本 ─────────────────────────────────────────────────
+            if (d.forceSellEnabled) {
+                const allSign  = d.avgAllProfit > 0 ? "+" : "";
+                const allStr   = d.avgAllProfit != null ? allSign + d.avgAllProfit.toFixed(2) + "%" : "-";
+                const allColor = d.avgAllProfit != null && d.avgAllProfit >= 0 ? "#c62828" : "#2e7d32";
+                const fsRate   = d.totalWithResult > 0
+                    ? (d.forceSellCount / d.totalWithResult * 100).toFixed(0) + "%" : "-";
+                const pRate2   = d.totalWithResult > 0
+                    ? (d.profitCount / d.totalWithResult * 100).toFixed(0) + "%" : "-";
+                const lRate2   = d.totalWithResult > 0
+                    ? (d.lossCount / d.totalWithResult * 100).toFixed(0) + "%" : "-";
+
+                cell.innerHTML =
+                    '<div style="font-size:16px;font-weight:800;color:' + allColor + ';line-height:1.2;">' + allStr + '</div>'
+                    + '<div style="font-size:11px;margin-top:2px;">'
+                        + '<span style="color:#c62828;">' + pRate2 + '↑</span>'
+                        + '<span style="color:#bbb;margin:0 2px;">|</span>'
+                        + '<span style="color:#2e7d32;">' + lRate2 + '↓</span>'
+                        + '<span style="color:#bbb;margin:0 2px;">|</span>'
+                        + '<span style="color:#888;">' + fsRate + '强卖</span>'
+                    + '</div>'
+                    + '<div style="font-size:10px;color:#1565c0;margin-top:1px;">'
+                        + d.hitRate.toFixed(0) + '% 触达</div>';
+            } else {
+                const hitRateStr = d.hitRate.toFixed(0) + "%";
+                const pAmongStr  = d.profitRateAmongHits.toFixed(0) + "%";
+                const lAmongStr  = d.lossRateAmongHits.toFixed(0) + "%";
+                const avgSign    = d.avgHitProfit != null && d.avgHitProfit > 0 ? "+" : "";
+                const avgStr     = d.avgHitProfit != null ? avgSign + d.avgHitProfit.toFixed(2) + "%" : "-";
+                const avgColor   = d.avgHitProfit != null && d.avgHitProfit >= 0 ? "#c62828" : "#2e7d32";
+
+                cell.innerHTML =
+                    '<div style="font-size:12px;font-weight:700;color:#1565c0;line-height:1.2;">' + hitRateStr + ' 触达</div>'
+                    + '<div style="font-size:16px;font-weight:800;color:' + avgColor + ';line-height:1.3;">' + avgStr + '</div>'
+                    + '<div style="font-size:11px;margin-top:1px;">'
+                        + '<span style="color:#c62828;">' + pAmongStr + '止盈</span>'
+                        + '<span style="color:#bbb;margin:0 2px;">|</span>'
+                        + '<span style="color:#2e7d32;">' + lAmongStr + '止损</span>'
+                    + '</div>';
+            }
+
+            // ── Tooltip ──────────────────────────────────────────────────
+            const tooltipData = {
+                pt, sl, totalStocks, forceSellEnabled: d.forceSellEnabled,
+                hitCount: d.hitCount, profitCount: d.profitCount, lossCount: d.lossCount,
+                missCount: d.missCount, forceSellCount: d.forceSellCount, ambigCount: d.ambigCount,
+                hitRate: d.hitRate, profitRateAmongHits: d.profitRateAmongHits,
+                lossRateAmongHits: d.lossRateAmongHits,
+                avgHitProfit: d.avgHitProfit, avgAllProfit: d.avgAllProfit,
+                avgProfitDays: d.avgProfitDays, avgLossDays: d.avgLossDays,
+                avgForceSellP: d.avgForceSellP, avgForceSellD: d.avgForceSellD,
+                hitStocks: d.hitStocks, forceSellStocks: d.forceSellStocks, missStocks: d.missStocks,
+            };
+            cell.dataset.tooltip = JSON.stringify(tooltipData);
+
+            cell.addEventListener("mouseenter", function(e) {
+                const td = JSON.parse(this.dataset.tooltip || "{}");
+                let html = '<div class="tooltip-title">止盈 +' + td.pt + '% / 止损 ' + td.sl + '%</div>';
+
+                html += '<div style="padding:6px 0;border-bottom:1px solid #eee;margin-bottom:6px;">';
+                html += '<div style="font-size:12px;">触达率：<b style="color:#1565c0;">'
+                    + td.hitRate.toFixed(1) + '%</b>'
+                    + ' <span style="color:#999;font-size:11px;">（' + td.hitCount + '/' + td.totalStocks + ' 只触及止盈/止损）</span></div>';
+                if (td.avgHitProfit != null) {
+                    const s = td.avgHitProfit > 0 ? "+" : "";
+                    html += '<div style="font-size:12px;">触达均值：<b style="color:'
+                        + (td.avgHitProfit >= 0 ? "#e53935" : "#43a047") + ';">'
+                        + s + td.avgHitProfit.toFixed(2) + '%</b></div>';
+                }
+                if (td.forceSellEnabled && td.avgAllProfit != null) {
+                    const s = td.avgAllProfit > 0 ? "+" : "";
+                    html += '<div style="font-size:12px;">全量均值（含强卖）：<b style="color:'
+                        + (td.avgAllProfit >= 0 ? "#e53935" : "#43a047") + ';">'
+                        + s + td.avgAllProfit.toFixed(2) + '%</b></div>';
+                }
+                html += '</div>';
+
+                if (td.profitCount > 0) {
+                    const dStr = td.avgProfitDays != null ? "平均 " + td.avgProfitDays.toFixed(1) + " 天" : "";
+                    html += '<div style="font-size:11px;margin-bottom:3px;">'
+                        + '<span style="color:#e53935;">▲ 止盈触发：' + td.profitCount + ' 只</span>'
+                        + (dStr ? ' <span style="color:#999;">(' + dStr + ')</span>' : '') + '</div>';
+                }
+                if (td.lossCount > 0) {
+                    const dStr = td.avgLossDays != null ? "平均 " + td.avgLossDays.toFixed(1) + " 天" : "";
+                    const ambig = td.ambigCount > 0 ? "，含 " + td.ambigCount + " 只同日双触发保守" : "";
+                    html += '<div style="font-size:11px;margin-bottom:3px;">'
+                        + '<span style="color:#43a047;">▼ 止损触发：' + td.lossCount + ' 只</span>'
+                        + (dStr ? ' <span style="color:#999;">(' + dStr + ambig + ')</span>' : '') + '</div>';
+                }
+                if (td.forceSellCount > 0) {
+                    const dStr = td.avgForceSellD != null ? "平均持有 " + td.avgForceSellD.toFixed(1) + " 天" : "";
+                    const pStr = td.avgForceSellP != null
+                        ? (td.avgForceSellP > 0 ? "+" : "") + td.avgForceSellP.toFixed(2) + "%" : "-";
+                    html += '<div style="font-size:11px;margin-bottom:3px;">'
+                        + '<span style="color:#888;">⏱ 强制卖出：' + td.forceSellCount + ' 只</span>'
+                        + ' <span style="color:#999;">（' + dStr + '，均值 ' + pStr + '）</span></div>';
+                }
+                if (td.missCount > 0) {
+                    html += '<div style="font-size:11px;margin-bottom:6px;">'
+                        + '<span style="color:#bbb;">◇ 窗口内未触发：' + td.missCount + ' 只</span></div>';
+                }
+
+                // 触发个股明细（止盈/止损）
+                const allHitList = [...(td.hitStocks || []), ...(td.forceSellStocks || [])];
+                if (allHitList.length > 0) {
+                    html += '<div style="border-top:1px solid #eee;padding-top:6px;">';
+                    html += '<div style="font-size:11px;color:#555;margin-bottom:4px;">个股明细（最多9只）</div>';
+                    html += '<div class="tooltip-stocks">';
+                    const showN = Math.min(9, allHitList.length);
+                    for (let i = 0; i < showN; i++) {
+                        const s = allHitList[i];
+                        const typeLabel = s.type === "profit" ? "止盈"
+                                        : (s.type === "loss" || s.type === "loss_ambiguous") ? "止损"
+                                        : "强卖";
+                        const pColor = s.profit >= 0 ? "#e53935" : "#43a047";
+                        html += '<div class="tooltip-stock-item">';
+                        html += '<div class="tooltip-stock-code">' + s.code + '</div>';
+                        html += '<div class="tooltip-stock-name">' + (s.name || "-") + '</div>';
+                        html += '<div class="tooltip-stock-info">' + (s.days || 0) + '天</div>';
+                        html += '<div class="tooltip-stock-info" style="color:' + pColor + ';">'
+                            + (s.profit > 0 ? "+" : "") + s.profit.toFixed(1) + '%</div>';
+                        html += '<div class="tooltip-stock-info">' + typeLabel + '</div>';
+                        html += '</div>';
+                    }
+                    html += '</div>';
+                    if (allHitList.length > 9) {
+                        html += '<div style="font-size:11px;color:#999;margin-top:4px;">还有 '
+                            + (allHitList.length - 9) + ' 只</div>';
+                    }
+                    html += '</div>';
+                }
+
+                showTooltip(html, e.clientX, e.clientY);
+            });
+            cell.addEventListener("mouseleave", function() { hideTooltip(); });
+
             row.appendChild(cell);
         });
-        results.push(rowResults);
-        stockDetails.push(rowDetails);
+
         tbody.appendChild(row);
-    });
-    const allResults = [];
-    results.forEach((row, r) => {
-        row.forEach((val, c) => {
-            if (val !== null && typeof val === 'number') {
-                allResults.push({ value: val, row: r, col: c });
-            }
-        });
-    });
-    allResults.sort((a, b) => b.value - a.value);
-    const top10 = allResults.slice(0, 10);
-    const bottom10 = allResults.slice(-10);
-    const rows = tbody.querySelectorAll("tr");
-    results.forEach((row, r) => {
-        const cells = rows[r].querySelectorAll("td");
-        row.forEach((val, c) => {
-            const cell = cells[c + 1];
-            const isTop10 = top10.some(item => item.row === r && item.col === c);
-            const isBottom10 = bottom10.some(item => item.row === r && item.col === c);
-            const currentBg = cell.style.backgroundColor;
-            const isHighHitRate = currentBg === "rgb(225, 190, 231)" || currentBg === "#e1bee7";
-            if (isTop10 && !isHighHitRate) {
-                cell.style.backgroundColor = "#fff3cd";
-                cell.style.fontWeight = "700";
-            } else if (isBottom10 && !isHighHitRate) {
-                cell.style.backgroundColor = "#f8d7da";
-                cell.style.fontWeight = "700";
-            } else if (isHighHitRate) {
-                cell.style.fontWeight = "600";
-            }
-        });
     });
 }
 function renderTimeMarkers() {
@@ -1329,6 +1510,19 @@ document.addEventListener("DOMContentLoaded", function() {
     window.addEventListener("resize", function() {
         renderTimeline();
     });
+
+    // 强制卖出勾选框联动
+    const forceSellCheckbox = document.getElementById("filter-enable-force-sell");
+    const forceSellDaysInput = document.getElementById("filter-force-sell-days");
+    if (forceSellCheckbox && forceSellDaysInput) {
+        forceSellCheckbox.addEventListener("change", function() {
+            forceSellDaysInput.disabled = !this.checked;
+            updateCalc();
+        });
+        forceSellDaysInput.addEventListener("change", function() {
+            updateCalc();
+        });
+    }
 });
 
 // 数据列表相关变量和函数
