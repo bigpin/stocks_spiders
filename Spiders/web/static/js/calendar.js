@@ -395,6 +395,8 @@ function getFilteredRecords() {
     const buyDayChangeMaxInput = document.getElementById("filter-buy-day-change-max").value;
     const nextDayChangeMinInput = document.getElementById("filter-next-day-change-min").value;
     const nextDayChangeMaxInput = document.getElementById("filter-next-day-change-max").value;
+    const heatMinInput = document.getElementById("filter-heat-min").value;
+    const heatMaxInput = document.getElementById("filter-heat-max").value;
     const daysMin = daysMinInput ? parseFloat(daysMinInput) : 0;
     const daysMax = daysMaxInput ? parseFloat(daysMaxInput) : Infinity;
     const priceMin = priceMinInput ? parseFloat(priceMinInput) : 0;
@@ -405,6 +407,8 @@ function getFilteredRecords() {
     const buyDayChangeMax = buyDayChangeMaxInput ? parseFloat(buyDayChangeMaxInput) : Infinity;
     const nextDayChangeMin = nextDayChangeMinInput ? parseFloat(nextDayChangeMinInput) : -Infinity;
     const nextDayChangeMax = nextDayChangeMaxInput ? parseFloat(nextDayChangeMaxInput) : Infinity;
+    const heatMin = heatMinInput ? parseFloat(heatMinInput) : null;
+    const heatMax = heatMaxInput ? parseFloat(heatMaxInput) : null;
     let dateThreshold = null;
     if (dateRangeInput) {
         const days = parseInt(dateRangeInput);
@@ -437,6 +441,13 @@ function getFilteredRecords() {
             if (rec.nextDayChangeRate === null || rec.nextDayChangeRate === undefined) return false;
             if (nextDayChangeMinInput && rec.nextDayChangeRate < nextDayChangeMin) return false;
             if (nextDayChangeMaxInput && rec.nextDayChangeRate > nextDayChangeMax) return false;
+        }
+        // 热度评分筛选：有值时，无评分信号也被过滤
+        if (heatMin !== null) {
+            if (rec.tradeHeatScore == null || rec.tradeHeatScore < heatMin) return false;
+        }
+        if (heatMax !== null) {
+            if (rec.tradeHeatScore == null || rec.tradeHeatScore > heatMax) return false;
         }
         const maxDays = Math.max(rec.highDays || 0, rec.lowDays || 0);
         if (daysMinInput && maxDays < daysMin) return false;
@@ -471,9 +482,11 @@ function resetCalcFilters() {
     document.getElementById("filter-buy-day-change-max").disabled = true;
     document.getElementById("filter-next-day-change-min").disabled = true;
     document.getElementById("filter-next-day-change-max").disabled = true;
-    document.getElementById("filter-enable-force-sell").checked = false;
+    document.getElementById("filter-heat-min").value = "50";
+    document.getElementById("filter-heat-max").value = "";
+    document.getElementById("filter-enable-force-sell").checked = true;
     document.getElementById("filter-force-sell-days").value = "30";
-    document.getElementById("filter-force-sell-days").disabled = true;
+    document.getElementById("filter-force-sell-days").disabled = false;
     updateSliderValue("filter-buy-day-change-min", "filter-buy-day-change-min-value");
     updateSliderValue("filter-buy-day-change-max", "filter-buy-day-change-max-value");
     updateSliderValue("filter-next-day-change-min", "filter-next-day-change-min-value");
@@ -1253,12 +1266,17 @@ async function loadDailyPricesForEvents(events) {
 }
 async function reloadTimeline() {
     const stockCode = document.getElementById("filter-stock-code").value;
-    const dateFrom = document.getElementById("filter-date-from").value;
-    const dateTo = document.getElementById("filter-date-to").value;
+    const dateFrom  = document.getElementById("filter-date-from").value;
+    const dateTo    = document.getElementById("filter-date-to").value;
+    const heatMin   = document.getElementById("filter-timeline-heat-min").value;
+    const heatMax   = document.getElementById("filter-timeline-heat-max").value;
     const params = new URLSearchParams();
     if (stockCode) params.append("stock_code", stockCode);
-    if (dateFrom) params.append("date_from", dateFrom);
-    if (dateTo) params.append("date_to", dateTo);
+    if (dateFrom)  params.append("date_from", dateFrom);
+    if (dateTo)    params.append("date_to", dateTo);
+    // heat 筛选传给后端（NULL 字段不受影响）
+    if (heatMin)   params.append("heat_min", heatMin);
+    if (heatMax)   params.append("heat_max", heatMax);
     const res = await fetch("/api/calendar/events?" + params.toString());
     const data = await res.json();
     const events = data.events || [];
@@ -1314,6 +1332,7 @@ async function reloadTimeline() {
             lowDays: e.lowest_days != null ? Number(e.lowest_days) : null,
             buyDayChangeRate: e.buy_day_change_rate != null ? Number(e.buy_day_change_rate) : null,
             nextDayChangeRate: e.next_day_change_rate != null ? Number(e.next_day_change_rate) : null,
+            tradeHeatScore: e.trade_heat_score != null ? Number(e.trade_heat_score) : null,
             dailyPrices: e.dailyPrices || null  // 每日价格数据
         };
         records.push(rec);
@@ -1365,6 +1384,8 @@ function resetFilters() {
     document.getElementById("filter-stock-code").value = "";
     document.getElementById("filter-date-from").value = "";
     document.getElementById("filter-date-to").value = "";
+    document.getElementById("filter-timeline-heat-min").value = "50";
+    document.getElementById("filter-timeline-heat-max").value = "";
     document.getElementById("filter-timeline-price-min").value = "";
     document.getElementById("filter-timeline-price-max").value = "";
     document.getElementById("filter-timeline-enable-buy-day-change").checked = false;
@@ -1511,10 +1532,11 @@ document.addEventListener("DOMContentLoaded", function() {
         renderTimeline();
     });
 
-    // 强制卖出勾选框联动
+    // 强制卖出勾选框联动（默认已勾选，天数框默认可用）
     const forceSellCheckbox = document.getElementById("filter-enable-force-sell");
     const forceSellDaysInput = document.getElementById("filter-force-sell-days");
     if (forceSellCheckbox && forceSellDaysInput) {
+        forceSellDaysInput.disabled = !forceSellCheckbox.checked;
         forceSellCheckbox.addEventListener("change", function() {
             forceSellDaysInput.disabled = !this.checked;
             updateCalc();

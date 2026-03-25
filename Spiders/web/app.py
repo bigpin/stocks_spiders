@@ -10,14 +10,15 @@ DB_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__)
 def migrate_database():
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
-    try:
-        cursor.execute('ALTER TABLE stock_signals ADD COLUMN buy_day_change_rate REAL')
-    except sqlite3.OperationalError:
-        pass
-    try:
-        cursor.execute('ALTER TABLE stock_signals ADD COLUMN next_day_change_rate REAL')
-    except sqlite3.OperationalError:
-        pass
+    for col_def in [
+        'ALTER TABLE stock_signals ADD COLUMN buy_day_change_rate REAL',
+        'ALTER TABLE stock_signals ADD COLUMN next_day_change_rate REAL',
+        'ALTER TABLE stock_signals ADD COLUMN trade_heat_score REAL',
+    ]:
+        try:
+            cursor.execute(col_def)
+        except sqlite3.OperationalError:
+            pass
     conn.commit()
     conn.close()
 
@@ -156,11 +157,13 @@ def get_calendar_events():
     stock_code = request.args.get('stock_code', '')
     date_from = request.args.get('date_from', '')
     date_to = request.args.get('date_to', '')
+    heat_min = request.args.get('heat_min', '')
+    heat_max = request.args.get('heat_max', '')
     query = """
         SELECT id, stock_code, stock_name, insert_date, insert_price,
                highest_price, highest_price_date, highest_change_rate, highest_days,
                lowest_price, lowest_price_date, lowest_change_rate, lowest_days,
-               buy_day_change_rate, next_day_change_rate
+               buy_day_change_rate, next_day_change_rate, trade_heat_score
         FROM stock_signals
         WHERE 1=1
     """
@@ -174,40 +177,34 @@ def get_calendar_events():
     if date_to:
         query += " AND date(insert_date) <= date(?)"
         params.append(date_to)
+    if heat_min:
+        query += " AND trade_heat_score >= ?"
+        params.append(float(heat_min))
+    if heat_max:
+        query += " AND trade_heat_score <= ?"
+        params.append(float(heat_max))
     query += " ORDER BY insert_date DESC"
     cursor.execute(query, params)
     rows = cursor.fetchall()
     events = []
     for row in rows:
-        signal_id = row[0]
-        insert_date = row[3]
-        insert_price = row[4]
-        highest_price = row[5]
-        highest_price_date = row[6]
-        highest_change_rate = row[7]
-        highest_days = row[8]
-        lowest_price = row[9]
-        lowest_price_date = row[10]
-        lowest_change_rate = row[11]
-        lowest_days = row[12]
-        buy_day_change_rate = row[13] if len(row) > 13 else None
-        next_day_change_rate = row[14] if len(row) > 14 else None
         events.append({
-            'id': signal_id,
+            'id': row[0],
             'stock_code': row[1],
             'stock_name': row[2],
-            'insert_date': insert_date,
-            'insert_price': insert_price,
-            'highest_price': highest_price,
-            'highest_price_date': highest_price_date,
-            'highest_change_rate': highest_change_rate,
-            'highest_days': highest_days,
-            'lowest_price': lowest_price,
-            'lowest_price_date': lowest_price_date,
-            'lowest_change_rate': lowest_change_rate,
-            'lowest_days': lowest_days,
-            'buy_day_change_rate': buy_day_change_rate,
-            'next_day_change_rate': next_day_change_rate
+            'insert_date': row[3],
+            'insert_price': row[4],
+            'highest_price': row[5],
+            'highest_price_date': row[6],
+            'highest_change_rate': row[7],
+            'highest_days': row[8],
+            'lowest_price': row[9],
+            'lowest_price_date': row[10],
+            'lowest_change_rate': row[11],
+            'lowest_days': row[12],
+            'buy_day_change_rate': row[13] if len(row) > 13 else None,
+            'next_day_change_rate': row[14] if len(row) > 14 else None,
+            'trade_heat_score': row[15] if len(row) > 15 else None,
         })
     conn.close()
     return jsonify({'events': events})

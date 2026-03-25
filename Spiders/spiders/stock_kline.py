@@ -790,13 +790,14 @@ class StockKlineSpider(scrapy.Spider):
                                 WHERE stock_code = ? AND insert_date = ?
                             ''', (stock_code, self.current_time))
                             
+                            heat_score_val = round(vh, 1) if vh is not None else None
                             self.cursor.execute('''
                                 INSERT INTO stock_signals (
                                     stock_code, stock_name, signal, signal_count,
                                     overall_success_rate, insert_date, insert_price,
-                                    created_at
+                                    created_at, trade_heat_score
                                 )
-                                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                             ''', (
                                 stock_code,
                                 data['data']['name'],
@@ -805,7 +806,8 @@ class StockKlineSpider(scrapy.Spider):
                                 round(kdj_analysis['overall_success_rate'], 2),
                                 self.current_time,
                                 round(last_close_price, 2),
-                                self.current_time
+                                self.current_time,
+                                heat_score_val,
                             ))
                             
                             # 输出信号到文件
@@ -994,13 +996,14 @@ class StockKlineSpider(scrapy.Spider):
                             WHERE stock_code = ? AND insert_date = ?
                         ''', (stock_code, self.current_time))
                         
+                        heat_score_val = round(vh, 1) if vh is not None else None
                         self.cursor.execute('''
                             INSERT INTO stock_signals (
                                 stock_code, stock_name, signal, signal_count,
                                 overall_success_rate, insert_date, insert_price,
-                                created_at
+                                created_at, trade_heat_score
                             )
-                            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                         ''', (
                             stock_code,
                             stock_name,
@@ -1009,7 +1012,8 @@ class StockKlineSpider(scrapy.Spider):
                             round(kdj_analysis['overall_success_rate'], 2),
                             self.current_time,
                             round(last_close_price, 2),
-                            self.current_time
+                            self.current_time,
+                            heat_score_val,
                         ))
                         
                         # 输出信号到文件

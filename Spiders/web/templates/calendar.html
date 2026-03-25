@@ -139,6 +139,15 @@
                     </div>
                     <div class="controls-row">
                         <div class="control-group">
+                            <div class="control-label">🔥 交易热度评分范围（0-100）</div>
+                            <div style="display: flex; gap: 8px; align-items: center; width: 100%; box-sizing: border-box;">
+                                <input type="number" id="filter-timeline-heat-min" class="control-input" placeholder="最低分" style="flex: 1;" min="0" max="100" step="1" value="50">
+                                <span style="flex-shrink: 0;">-</span>
+                                <input type="number" id="filter-timeline-heat-max" class="control-input" placeholder="最高分" style="flex: 1;" min="0" max="100" step="1">
+                            </div>
+                            <span style="font-size:11px;color:#999;margin-top:2px;">留空=不限；有填写时无评分数据的信号将被过滤</span>
+                        </div>
+                        <div class="control-group">
                             <div class="control-label">操作</div>
                             <div style="display: flex; gap: 8px;">
                                 <button class="btn btn-primary" onclick="reloadTimeline()" style="flex: 1;">应用筛选</button>
@@ -324,13 +333,22 @@
                     </div>
                     <div class="controls-row">
                         <div class="control-group">
+                            <div class="control-label">🔥 交易热度评分范围（0-100）</div>
+                            <div style="display: flex; gap: 8px; align-items: center; width: 100%; box-sizing: border-box;">
+                                <input type="number" id="filter-heat-min" class="control-input" placeholder="最低分" style="flex: 1;" min="0" max="100" step="1" value="50">
+                                <span style="flex-shrink: 0;">-</span>
+                                <input type="number" id="filter-heat-max" class="control-input" placeholder="最高分" style="flex: 1;" min="0" max="100" step="1">
+                            </div>
+                            <span style="font-size:11px;color:#999;margin-top:2px;">留空=不限；有填写时无评分数据的信号将被过滤</span>
+                        </div>
+                        <div class="control-group">
                             <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 6px;">
-                                <input type="checkbox" id="filter-enable-force-sell" style="width: 16px; height: 16px;">
+                                <input type="checkbox" id="filter-enable-force-sell" style="width: 16px; height: 16px;" checked>
                                 <div class="control-label" style="margin: 0;">未触达时强制持有后卖出</div>
                             </div>
                             <div style="display: flex; align-items: center; gap: 8px;">
                                 <span style="font-size:12px;color:#666;white-space:nowrap;">持有天数</span>
-                                <input type="number" id="filter-force-sell-days" class="control-input" value="30" min="1" max="999" style="width:70px;" disabled>
+                                <input type="number" id="filter-force-sell-days" class="control-input" value="30" min="1" max="999" style="width:70px;">
                                 <span style="font-size:11px;color:#999;">天后按收盘价卖出</span>
                             </div>
                         </div>
