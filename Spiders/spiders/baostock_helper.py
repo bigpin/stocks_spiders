@@ -202,10 +202,10 @@ def fetch_kline_data_baostock(stock_code, start_date=None, end_date=None,
         # 确保已登录（全局只登录一次）
         login_baostock()
         
-        # 查询K线数据
+        # 查询K线数据（含估值字段 peTTM/pbMRQ，省去单独的估值抓取阶段）
         rs = bs.query_history_k_data_plus(
             bs_code,
-            "date,open,high,low,close,preclose,volume,amount,adjustflag,turn,tradestatus,pctChg,isST",
+            "date,open,high,low,close,preclose,volume,amount,adjustflag,turn,tradestatus,pctChg,isST,peTTM,pbMRQ",
             start_date=start_date,
             end_date=end_date,
             frequency=frequency,
@@ -233,7 +233,7 @@ def fetch_kline_data_baostock(stock_code, start_date=None, end_date=None,
         
         # 数据类型转换
         numeric_columns = ['open', 'high', 'low', 'close', 'preclose', 'volume', 
-                          'amount', 'turn', 'pctChg']
+                          'amount', 'turn', 'pctChg', 'peTTM', 'pbMRQ']
         for col in numeric_columns:
             if col in df.columns:
                 df[col] = pd.to_numeric(df[col], errors='coerce')
@@ -255,7 +255,9 @@ def fetch_kline_data_baostock(stock_code, start_date=None, end_date=None,
             'pctChg': 'change_rate',  # 涨跌幅
             'turn': 'turnover',  # 换手率
             'tradestatus': 'trade_status',
-            'isST': 'is_st'
+            'isST': 'is_st',
+            'peTTM': 'peTTM',
+            'pbMRQ': 'pbMRQ',
         }
         
         # 只保留需要的列
@@ -452,19 +454,36 @@ def fetch_stock_fundamental_worker(stock_code, latest_date=None):
         return None
 
 
-def fetch_one_baostock_worker(stock_code, start_date, end_date):
+def fetch_one_baostock_worker(stock_code, start_date, end_date, max_retries=3):
     """
     供多进程调用的 worker：在独立进程中拉取单只股票 K 线 + 名称，避免 baostock SDK 线程安全问题。
+    遇到 BrokenPipeError / 连接异常时自动重试（重新登录后再请求）。
     返回 (stock_code, stock_name, df)，df 为 None 表示拉取失败。
     """
-    login_baostock()
-    df = fetch_kline_data_baostock_simple(
-        stock_code=stock_code,
-        start_date=start_date,
-        end_date=end_date,
-        verbose=False,
-    )
-    if df is None or df.empty:
-        return (stock_code, None, None)
-    name = get_stock_name_baostock(stock_code) or stock_code
-    return (stock_code, name, df)
+    global _BAOSTOCK_LOGGED_IN
+
+    for attempt in range(1, max_retries + 1):
+        try:
+            login_baostock()
+            df = fetch_kline_data_baostock_simple(
+                stock_code=stock_code,
+                start_date=start_date,
+                end_date=end_date,
+                verbose=False,
+            )
+            if df is None or df.empty:
+                return (stock_code, None, None)
+            name = get_stock_name_baostock(stock_code) or stock_code
+            return (stock_code, name, df)
+        except (BrokenPipeError, ConnectionError, OSError) as e:
+            if attempt < max_retries:
+                _BAOSTOCK_LOGGED_IN = False
+                try:
+                    bs.logout()
+                except Exception:
+                    pass
+                time.sleep(1 * attempt)
+            else:
+                return (stock_code, None, None)
+        except Exception:
+            return (stock_code, None, None)

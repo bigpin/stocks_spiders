@@ -125,6 +125,54 @@ class StockKlineSpider(scrapy.Spider):
         self.cursor = self.conn.cursor()
         self.create_table()
 
+    def _export_valuation_csv(self, results):
+        """从 K 线拉取结果中提取最后一行的 PE/PB，写入 stock_detail_data.csv（兼容下游）。"""
+        import csv as csv_mod
+        project_root = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
+        out_path = os.path.join(project_root, 'stock_detail_data.csv')
+        fields = [
+            'stock_id', 'stock_name', 'new_price', 'percentage_change', 'price_change',
+            'trading_volume', 'trading_value', 'highest_price', 'lowest_price',
+            'opening_price', 'closing_price', 'turnover_rate', 'pe', 'pb',
+        ]
+        rows_written = 0
+        try:
+            with open(out_path, 'w', encoding='utf-8', newline='') as f:
+                writer = csv_mod.writer(f)
+                writer.writerow(fields)
+                for code in self.stock_codes:
+                    if code not in results:
+                        continue
+                    s_code, s_name, df = results[code]
+                    if df is None or df.empty:
+                        continue
+                    last = df.iloc[-1]
+                    pe_val = last.get('peTTM')
+                    pb_val = last.get('pbMRQ')
+                    pe = float(pe_val) if pe_val is not None and pd.notna(pe_val) and str(pe_val).strip() else None
+                    pb = float(pb_val) if pb_val is not None and pd.notna(pb_val) and str(pb_val).strip() else None
+                    row = {
+                        'stock_id': s_code,
+                        'stock_name': s_name or s_code,
+                        'new_price': last.get('close'),
+                        'percentage_change': last.get('change_rate'),
+                        'price_change': None,
+                        'trading_volume': last.get('volume'),
+                        'trading_value': last.get('amount'),
+                        'highest_price': last.get('high'),
+                        'lowest_price': last.get('low'),
+                        'opening_price': last.get('open'),
+                        'closing_price': None,
+                        'turnover_rate': last.get('turnover'),
+                        'pe': pe,
+                        'pb': pb,
+                    }
+                    writer.writerow([row.get(k, '') for k in fields])
+                    rows_written += 1
+            self.logger.warning(f"估值 CSV 已从 K 线结果导出: {rows_written} 只 -> {out_path}")
+        except Exception as e:
+            self.logger.error(f"导出估值 CSV 失败: {e}")
+
     def _normalize_stock_code(self, code):
         if not code:
             return None
@@ -205,16 +253,36 @@ class StockKlineSpider(scrapy.Spider):
             self.logger.warning(f"估值缓存加载完成: {len(fundamental_map)} 只股票")
         return fundamental_map
 
-    def _passes_valuation_filters(self, stock_code):
+    def _get_valuation(self, stock_code, df=None):
+        """获取股票 PE/PB：优先从 K 线 DataFrame（含 peTTM/pbMRQ 列）取最后一行，回退到 fundamental_map。"""
+        pe, pb = None, None
+        if df is not None and not df.empty:
+            last = df.iloc[-1]
+            pe_val = last.get('peTTM')
+            pb_val = last.get('pbMRQ')
+            if pe_val is not None and pd.notna(pe_val):
+                try:
+                    pe = float(pe_val)
+                except (TypeError, ValueError):
+                    pass
+            if pb_val is not None and pd.notna(pb_val):
+                try:
+                    pb = float(pb_val)
+                except (TypeError, ValueError):
+                    pass
+        if pe is None and pb is None and self.fundamental_map:
+            data = self.fundamental_map.get(stock_code)
+            if data:
+                pe = data.get('pe')
+                pb = data.get('pb')
+        return pe, pb
+
+    def _passes_valuation_filters(self, stock_code, df=None):
         if not SIGNAL_FILTERS['valuation'].get('enable', True):
             return True
-        if not stock_code or not self.fundamental_map:
+        pe, pb = self._get_valuation(stock_code, df)
+        if pe is None and pb is None:
             return True
-        data = self.fundamental_map.get(stock_code)
-        if not data:
-            return True
-        pe = data.get('pe')
-        pb = data.get('pb')
         pe_min = SIGNAL_FILTERS['valuation'].get('pe_min')
         pe_max = SIGNAL_FILTERS['valuation'].get('pe_max')
         pb_min = SIGNAL_FILTERS['valuation'].get('pb_min')
@@ -229,16 +297,12 @@ class StockKlineSpider(scrapy.Spider):
             return False
         return True
 
-    def _check_valuation_filters(self, stock_code):
+    def _check_valuation_filters(self, stock_code, df=None):
         if not SIGNAL_FILTERS['valuation'].get('enable', True):
             return True, 'disabled'
-        if not stock_code or not self.fundamental_map:
+        pe, pb = self._get_valuation(stock_code, df)
+        if pe is None and pb is None:
             return True, 'missing'
-        data = self.fundamental_map.get(stock_code)
-        if not data:
-            return True, 'missing'
-        pe = data.get('pe')
-        pb = data.get('pb')
         pe_min = SIGNAL_FILTERS['valuation'].get('pe_min')
         pe_max = SIGNAL_FILTERS['valuation'].get('pe_max')
         pb_min = SIGNAL_FILTERS['valuation'].get('pb_min')
@@ -520,7 +584,7 @@ class StockKlineSpider(scrapy.Spider):
         # 根据数据源配置选择不同的获取方式
         if DATA_SOURCE == 'baostock':
             # 多进程并行：每个进程独立连接 baostock，互不干扰，可真正并行
-            workers = max(1, min(int(BAOSTOCK_FETCH_WORKERS), 16))
+            workers = max(1, int(BAOSTOCK_FETCH_WORKERS))
             total = len(self.stock_codes)
             self.logger.warning(f"开始拉取 {total} 只股票，{workers} 进程并行，每 50 只打印进度")
             results = {}
@@ -536,10 +600,13 @@ class StockKlineSpider(scrapy.Spider):
                         ): code
                         for code in self.stock_codes
                     }
-                    for future in as_completed(futures):
+                    for future in as_completed(futures, timeout=7200):
                         code = futures[future]
                         try:
-                            results[code] = future.result()
+                            results[code] = future.result(timeout=120)
+                        except TimeoutError:
+                            self.logger.error(f"拉取 {code} 超时(120s)，跳过")
+                            results[code] = (code, None, None)
                         except Exception as e:
                             self.logger.error(f"拉取 {code} 出错: {e}")
                             results[code] = (code, None, None)
@@ -560,15 +627,79 @@ class StockKlineSpider(scrapy.Spider):
                     if done == 1 or done % 50 == 0 or done == total:
                         self.logger.warning(f"已拉取 {done}/{total} 只")
 
-            for count, stock_code in enumerate(self.stock_codes, 1):
-                if stock_code not in results:
+            # 从 K 线结果中提取估值写入 CSV（替代独立的估值抓取阶段）
+            self._export_valuation_csv(results)
+
+            # 并行计算信号（CPU 密集型，与网络无关）
+            from .stock_config import PROCESS_KLINE_WORKERS
+            from .signal_compute_worker import compute_signals_for_stock
+            kline_workers = int(PROCESS_KLINE_WORKERS) if PROCESS_KLINE_WORKERS else 0
+
+            valid_items = []
+            for code in self.stock_codes:
+                if code not in results:
                     continue
-                stock_code, stock_name, df = results[stock_code]
-                if df is not None and not df.empty:
-                    self.logger.warning(f"开始处理第{count}个股票 {stock_code} 的数据")
-                    self.process_kline_data(stock_code, stock_name, df)
-                else:
-                    self.logger.error(f"无法获取 {stock_code} 的K线数据")
+                s_code, s_name, s_df = results[code]
+                if s_df is not None and not s_df.empty:
+                    valid_items.append((s_code, s_name, s_df))
+
+            if kline_workers > 0 and len(valid_items) > 1:
+                self.logger.warning(
+                    f"开始并行计算 {len(valid_items)} 只股票的信号，{kline_workers} 进程"
+                )
+                compute_results = {}
+                compute_done = 0
+                try:
+                    with ProcessPoolExecutor(max_workers=kline_workers) as compute_executor:
+                        compute_futures = {
+                            compute_executor.submit(
+                                compute_signals_for_stock,
+                                s_code, s_name, s_df,
+                                INDICATORS_CONFIG, SIGNAL_FILTERS, self.current_time,
+                            ): s_code
+                            for s_code, s_name, s_df in valid_items
+                        }
+                        for future in as_completed(compute_futures, timeout=7200):
+                            code = compute_futures[future]
+                            try:
+                                compute_results[code] = future.result(timeout=60)
+                            except TimeoutError:
+                                self.logger.error(f"计算 {code} 信号超时(60s)，跳过")
+                                compute_results[code] = {
+                                    'stock_code': code,
+                                    'stock_name': code,
+                                    'skip': True,
+                                    'reason': '计算超时',
+                                }
+                            except Exception as e:
+                                self.logger.error(f"计算 {code} 信号出错: {e}")
+                                compute_results[code] = {
+                                    'stock_code': code,
+                                    'stock_name': code,
+                                    'skip': False,
+                                    'error': str(e),
+                                }
+                            compute_done += 1
+                            if compute_done == 1 or compute_done % 200 == 0 or compute_done == len(valid_items):
+                                self.logger.warning(f"已计算 {compute_done}/{len(valid_items)} 只")
+                except Exception as e:
+                    self.logger.error(f"并行信号计算异常，回退到串行: {e}")
+                    compute_results = None
+
+                if compute_results is not None:
+                    for s_code, s_name, _ in valid_items:
+                        res = compute_results.get(s_code)
+                        if res is None:
+                            continue
+                        self._process_compute_result(res)
+                    return
+                # 并行失败，回退到串行
+
+            self.logger.warning(f"串行处理 {len(valid_items)} 只股票的信号")
+            for count, (s_code, s_name, s_df) in enumerate(valid_items, 1):
+                if count == 1 or count % 50 == 0 or count == len(valid_items):
+                    self.logger.warning(f"开始处理第{count}个股票 {s_code} 的数据")
+                self.process_kline_data(s_code, s_name, s_df)
             return
 
         # 非 baostock：原有逐只请求逻辑（东方财富等）
@@ -908,6 +1039,118 @@ class StockKlineSpider(scrapy.Spider):
             self.write_to_signal_file(traceback.format_exc())
             return  # 出现异常时直接返回，不继续执行
         
+    def _process_compute_result(self, res):
+        """处理 compute_signals_for_stock 返回的结果（主进程 I/O）。"""
+        stock_code = res['stock_code']
+        stock_name = res['stock_name']
+
+        if res.get('error'):
+            self.logger.error(f"处理 {stock_code} 信号计算结果出错: {res['error']}")
+            self.write_to_signal_file(f"\n错误: {stock_code} 信号计算失败: {res['error']}")
+            return
+        if res.get('skip'):
+            self.logger.warning(f"股票 {stock_code}: {res.get('reason', '跳过')}")
+            return
+
+        kdj_analysis = res['kdj_analysis']
+        vh = res.get('heat_score')
+        last_close_price = res['last_close_price']
+        df = res['df']
+
+        if kdj_analysis.get('recent_signals'):
+            signal_type_count = {}
+            for signal in kdj_analysis['recent_signals']:
+                st = signal['signal']
+                signal_type_count[st] = signal_type_count.get(st, 0) + 1
+
+            if len(signal_type_count) > 5:
+                self.write_to_signal_file(f"\n股票 {stock_name}({stock_code}) 股票信号分析结果")
+                self.write_to_signal_file(f"总体成功率: {kdj_analysis['overall_success_rate']:.2f}%")
+                self.write_to_signal_file(f"总信号数: {kdj_analysis['total_signals']}")
+                self.write_to_signal_file(f"总成功数: {kdj_analysis['total_success']}")
+                if vh is not None:
+                    self.write_to_signal_file(f"最近交易热度评分: {vh}/100")
+
+                self.write_to_signal_file("\n最近3天出现的高胜率信号：")
+                self.write_to_signal_file(f"共有{len(kdj_analysis['recent_signals'])}个信号，{len(signal_type_count)}种类型：")
+                for st, cnt in signal_type_count.items():
+                    self.write_to_signal_file(f"- {st}: {cnt}个")
+
+                signals_to_insert = []
+                for signal in kdj_analysis['recent_signals']:
+                    signals_to_insert.append((
+                        stock_code,
+                        stock_name,
+                        signal['date'].strftime("%Y-%m-%d"),
+                        signal['signal'],
+                        round(signal['signal_success_rate'], 2),
+                        round(signal['close'], 2),
+                        self.current_time,
+                    ))
+
+                if signals_to_insert:
+                    self.cursor.executemany('''
+                        INSERT OR IGNORE INTO stock_data (
+                            stock_code, stock_name, date, signal,
+                            success_rate, initial_price, created_at
+                        )
+                        VALUES (?, ?, ?, ?, ?, ?, ?)
+                    ''', signals_to_insert)
+                    self.conn.commit()
+
+                self.cursor.execute('''
+                    DELETE FROM stock_signals
+                    WHERE stock_code = ? AND insert_date = ?
+                ''', (stock_code, self.current_time))
+
+                heat_score_val = round(vh, 1) if vh is not None else None
+                self.cursor.execute('''
+                    INSERT INTO stock_signals (
+                        stock_code, stock_name, signal, signal_count,
+                        overall_success_rate, insert_date, insert_price,
+                        created_at, trade_heat_score
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ''', (
+                    stock_code,
+                    stock_name,
+                    ','.join(signal_type_count.keys()),
+                    len(signal_type_count),
+                    round(kdj_analysis['overall_success_rate'], 2),
+                    self.current_time,
+                    round(last_close_price, 2),
+                    self.current_time,
+                    heat_score_val,
+                ))
+
+                for signal in kdj_analysis['recent_signals']:
+                    if signal:
+                        signal_info = [
+                            f"日期: {signal['date'].strftime('%Y-%m-%d')}",
+                            f"信号类型: {signal['signal_type']}",
+                            f"信号: {signal['signal']}",
+                            f"信号胜率: {signal['signal_success_rate']:.2f}%",
+                            f"(历史出现: {signal['signal_total']}次)",
+                            f"整体胜率: {signal['overall_success_rate']:.2f}%",
+                            f"收盘价: {signal['close']:.2f}",
+                        ]
+                        signal_info_str = ", ".join(signal_info)
+                        self.write_to_signal_file(f"股票: {stock_name}({stock_code}), {signal_info_str}")
+                self.write_to_signal_file("-" * 80)
+                self.logger.warning(f"股票 {stock_code} 信号分析结果已写入文件: {self.signal_file}")
+
+        # 更新价格极值
+        self.update_price_extremes(stock_code, stock_name, df)
+
+        # 输出估值过滤统计
+        vi = kdj_analysis.get('valuation_info', {})
+        if vi.get('checked', 0) > 0:
+            hit_rate = round(vi['blocked'] / vi['checked'] * 100, 2)
+            self.logger.warning(
+                f"股票 {stock_code} 估值过滤命中率: {hit_rate}% "
+                f"(过滤 {vi['blocked']}/{vi['checked']}, 缺失 {vi['missing']}, 触发 {vi['candidates']})"
+            )
+
     def process_kline_data(self, stock_code, stock_name, df):
         """
         处理K线数据（用于baostock数据源）
@@ -1553,7 +1796,7 @@ class StockKlineSpider(scrapy.Spider):
                         continue
                     if not self._passes_liquidity_filters(df, current_pos, signal_type):
                         continue
-                    passed, status = self._check_valuation_filters(stock_code)
+                    passed, status = self._check_valuation_filters(stock_code, df=df)
                     if status in ('passed', 'blocked'):
                         valuation_checked += 1
                     elif status == 'missing':

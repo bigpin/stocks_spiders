@@ -1,3 +1,5 @@
+import os
+
 # 东方财富API配置
 EASTMONEY_API = {
     'base_url': 'https://push2.eastmoney.com/api/qt/stock/get',
@@ -63,8 +65,13 @@ BAOSTOCK_PREFIX_MAP = {
 # 数据源配置：'eastmoney' 或 'baostock'
 DATA_SOURCE = 'baostock'  # 默认使用 baostock
 
-# baostock 并行拉取时的线程数（仅当 DATA_SOURCE='baostock' 时生效）
+# baostock 并行拉取进程数（仅当 DATA_SOURCE='baostock' 时生效）
+# 实测 8 进程稳定；12 进程会出现大量 Broken pipe，不建议超过 8
 BAOSTOCK_FETCH_WORKERS = 8
+
+# K 线拉取完成后，信号计算（指标+analyze_signals）的并行进程数；0 表示串行
+# 纯 CPU 计算，与 baostock 无关；设为 CPU 核数即可（过多会增加内存和 pickle 开销）
+PROCESS_KLINE_WORKERS = min(8, os.cpu_count() or 4)
 
 
 # K线数据

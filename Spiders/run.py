@@ -532,18 +532,9 @@ if __name__ == "__main__":
         log_to_file(log_file, f"[STEP 1.5] 股票列表缓存已过期或不存在，开始更新...")
         run_stock_list_spider(force=False, log_file=log_file)
     
-    # 自动更新估值缓存（stock_detail_data.csv），收盘后固定刷新
+    # 估值数据已合并到 K 线阶段（baostock peTTM/pbMRQ），不再单独抓取
     detail_file_path = os.path.join(project_root, STOCK_DETAIL_FILE)
-    log_to_file(log_file, f"[STEP 1.7] 检查估值缓存...")
-    if should_refresh_stock_detail_cache(detail_file_path):
-        log_to_file(log_file, f"[STEP 1.7] 估值缓存需要刷新，开始更新...")
-        run_stock_detail_spider(stock_file_path, log_file=log_file, target_date=target_date)
-    else:
-        file_mtime = datetime.fromtimestamp(os.path.getmtime(detail_file_path)) if os.path.exists(detail_file_path) else None
-        if file_mtime:
-            log_to_file(log_file, f"[STEP 1.7] 估值缓存有效，上次更新: {file_mtime.strftime('%Y-%m-%d %H:%M:%S')}")
-        else:
-            log_to_file(log_file, f"[STEP 1.7] 估值缓存缺失但未到刷新时间，暂不更新")
+    log_to_file(log_file, f"[STEP 1.7] 估值数据将在 K 线阶段从 peTTM/pbMRQ 字段自动生成，跳过独立估值抓取")
     
     # 统计本次将要处理的股票代码数量（优先从股票列表文件统计）
     try:
