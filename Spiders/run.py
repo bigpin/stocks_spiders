@@ -74,12 +74,16 @@ def run_stock_list_spider(force=False, log_file=None):
     
     # 优先使用 baostock 获取股票列表（无需 API Key、无需子进程）
     try:
-        from spiders.baostock_helper import get_stock_list_baostock
-        codes = get_stock_list_baostock(a_share_only=True)
-        if codes:
+        from spiders.baostock_helper import get_stock_list_baostock_entries
+        entries = get_stock_list_baostock_entries(a_share_only=True)
+        if entries:
             with open(stock_file_path, 'w', encoding='utf-8') as f:
-                f.write('\n'.join(codes))
-            log(f"[INFO] 股票列表获取完成（baostock），共 {len(codes)} 只")
+                for code, nm in entries:
+                    if nm:
+                        f.write(f"{code}\t{nm}\n")
+                    else:
+                        f.write(f"{code}\n")
+            log(f"[INFO] 股票列表获取完成（baostock），共 {len(entries)} 只")
             return True
         log(f"[WARNING] baostock 返回空列表（可能为非交易日），尝试聚合接口...")
     except Exception as e:
@@ -182,12 +186,12 @@ def run_stock_detail_spider(stock_file_path, log_file=None, target_date=None):
     project_root = os.path.dirname(script_dir)
     output_file_path = os.path.join(project_root, STOCK_DETAIL_FILE)
 
-    # 读取股票列表
+    # 读取股票列表（兼容「代码」与「代码\\t名称」，只取代码列）
     codes = []
     try:
         if os.path.exists(stock_file_path):
-            with open(stock_file_path, 'r', encoding='utf-8') as f:
-                codes = [line.strip() for line in f if line.strip()]
+            from spiders.baostock_helper import read_stock_list_txt
+            codes, _ = read_stock_list_txt(stock_file_path)
             log(f"[INFO] 估值抓取股票数量: {len(codes)}")
         else:
             log(f"[WARNING] 股票列表不存在: {stock_file_path}")
@@ -539,8 +543,8 @@ if __name__ == "__main__":
     # 统计本次将要处理的股票代码数量（优先从股票列表文件统计）
     try:
         if os.path.exists(stock_file_path):
-            with open(stock_file_path, 'r', encoding='utf-8') as f:
-                codes = [line.strip() for line in f if line.strip()]
+            from spiders.baostock_helper import read_stock_list_txt
+            codes, _ = read_stock_list_txt(stock_file_path)
             code_count = len(codes)
         else:
             if isinstance(STOCK_CODES, str):

@@ -20,6 +20,7 @@ from .baostock_helper import (
     get_stock_name_baostock,
     login_baostock,
     fetch_one_baostock_worker,
+    read_stock_list_txt,
 )
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from .technical_indicators import TechnicalIndicators
@@ -84,17 +85,19 @@ class StockKlineSpider(scrapy.Spider):
         self.current_date = datetime.strptime(end_date, "%Y%m%d") if end_date else datetime.now()
         self.current_time = self.current_date.strftime("%Y-%m-%d")
         
-        # 从文件读取股票代码或使用传入的股票代码
+        # 从文件读取股票代码或使用传入的股票代码（文件可为「代码」或「代码\\t名称」）
+        self._list_name_by_code = {}
         if use_file and use_file.lower() == 'true':
             try:
-                with open(stock_file, 'r', encoding='utf-8') as f:
-                    self.stock_codes = [line.strip() for line in f if line.strip()]
+                self.stock_codes, self._list_name_by_code = read_stock_list_txt(stock_file)
                 if not self.stock_codes:
                     self.logger.warning(f"股票代码文件 {stock_file} 为空，使用默认股票代码")
                     self.stock_codes = ['sh603288', 'sz000858']
+                    self._list_name_by_code = {}
             except FileNotFoundError:
                 self.logger.error(f"找不到股票代码文件 {stock_file}，使用默认股票代码")
                 self.stock_codes = ['sh603288', 'sz000858']
+                self._list_name_by_code = {}
         else:
             self.stock_codes = stock_codes.split(',') if stock_codes else ['sh603288', 'sz000858']
         
@@ -597,6 +600,8 @@ class StockKlineSpider(scrapy.Spider):
                             code,
                             self.start_date,
                             self.end_date,
+                            3,
+                            self._list_name_by_code.get(code),
                         ): code
                         for code in self.stock_codes
                     }
@@ -619,7 +624,13 @@ class StockKlineSpider(scrapy.Spider):
                 done = 0
                 for code in self.stock_codes:
                     try:
-                        results[code] = fetch_one_baostock_worker(code, self.start_date, self.end_date)
+                        results[code] = fetch_one_baostock_worker(
+                            code,
+                            self.start_date,
+                            self.end_date,
+                            3,
+                            self._list_name_by_code.get(code),
+                        )
                     except Exception as e2:
                         self.logger.error(f"拉取 {code} 出错: {e2}")
                         results[code] = (code, None, None)

@@ -5,6 +5,7 @@ baostock 数据获取辅助函数
 用于替代东方财富API，提供更稳定的股票数据获取
 """
 
+import os
 import baostock as bs
 import pandas as pd
 from datetime import datetime
@@ -13,6 +14,45 @@ import time
 
 # 模块级登录状态，整个进程内只登录一次
 _BAOSTOCK_LOGGED_IN = False
+
+
+def parse_stock_list_line(line):
+    """解析 stock_list.txt 单行：兼容仅代码，或「代码\\t名称」（列表更新时写入）。"""
+    if line is None:
+        return None, None
+    line = line.strip()
+    if not line or line.startswith("#"):
+        return None, None
+    if "\t" in line:
+        code, _, rest = line.partition("\t")
+        code = code.strip()
+        if not code:
+            return None, None
+        name = rest.strip()
+        return code, (name or None)
+    return line, None
+
+
+def read_stock_list_txt(path):
+    """
+    读取 stock_list.txt。
+
+    Returns:
+        tuple[list[str], dict[str, str]]: (代码顺序列表, 代码->文件中的简称)
+    """
+    if not os.path.exists(path):
+        return [], {}
+    codes = []
+    list_name_by_code = {}
+    with open(path, "r", encoding="utf-8") as f:
+        for raw in f:
+            code, list_name = parse_stock_list_line(raw)
+            if not code:
+                continue
+            codes.append(code)
+            if list_name:
+                list_name_by_code[code] = list_name
+    return codes, list_name_by_code
 
 
 def convert_stock_code_to_baostock(stock_code):
@@ -88,73 +128,87 @@ def _get_trade_days_baostock(before_date=None, back_days=30):
     return trading_dates
 
 
-def get_stock_list_baostock(day=None, a_share_only=True, try_days=10):
+def _rows_to_stock_list_entries(rows, a_share_only):
+    """将 query_all_stock 行转为 (扁平代码, 简称)；简称来自接口 code_name 列。"""
+    entries = []
+    for row in rows:
+        code = row[0]
+        code_flat = code.replace(".", "")
+        code_name = (row[2] or "").strip() if len(row) > 2 else ""
+        if not a_share_only:
+            entries.append((code_flat, code_name))
+            continue
+        if "." not in code:
+            continue
+        market, num = code.split(".", 1)
+        if market == "sh" and (num.startswith("60") or num.startswith("68")):
+            entries.append((code_flat, code_name))
+        elif market == "sz" and (num.startswith("00") or num.startswith("30")):
+            entries.append((code_flat, code_name))
+        elif market == "bj" and (num[0] in ("4", "8")):
+            entries.append((code_flat, code_name))
+    return entries
+
+
+def get_stock_list_baostock_entries(day=None, a_share_only=True, try_days=10):
     """
-    使用 baostock 获取股票列表（对应 query_all_stock）。
-    
+    使用 baostock query_all_stock 获取股票列表，带证券简称（接口字段 code_name）。
+
     参数:
         day: 交易日，格式 'YYYY-MM-DD' 或 'YYYYMMDD'；为空则用 query_trade_dates 取最近交易日
         a_share_only: 是否只保留 A 股（默认 True，过滤掉指数、B 股等）
         try_days: 当 day 为空且 query_trade_dates 不可用时，向前尝试的日历天数
-    
+
     返回:
-        list[str]: 股票代码列表，格式与项目一致，如 ['sh600000', 'sz000001']
+        list[tuple[str, str]]: (sh600000 形式代码, 简称)，简称可能为空字符串
     """
     from datetime import timedelta
 
     login_baostock()
 
     def query_one_day(day_str):
-        if len(day_str) == 8:  # YYYYMMDD
+        if len(day_str) == 8:
             day_str = f"{day_str[:4]}-{day_str[4:6]}-{day_str[6:8]}"
         rs = bs.query_all_stock(day=day_str)
-        if rs.error_code != '0':
+        if rs.error_code != "0":
             raise RuntimeError(f"baostock query_all_stock 失败: {rs.error_msg}")
         rows = []
         while rs.next():
             rows.append(rs.get_row_data())
         return rows, day_str
 
-    def rows_to_codes(rows):
-        codes = []
-        for row in rows:
-            code = row[0]  # 如 'sh.600000' 或 'sz.000001'
-            code_flat = code.replace(".", "")
-            if not a_share_only:
-                codes.append(code_flat)
-                continue
-            if "." in code:
-                market, num = code.split(".", 1)
-            else:
-                continue
-            if market == "sh" and (num.startswith("60") or num.startswith("68")):
-                codes.append(code_flat)
-            elif market == "sz" and (num.startswith("00") or num.startswith("30")):
-                codes.append(code_flat)
-            elif market == "bj" and (num[0] in ("4", "8")):
-                codes.append(code_flat)
-        return codes
-
     if day:
         day_str = day if isinstance(day, str) else day.strftime("%Y-%m-%d")
         rows, _ = query_one_day(day_str)
-        return rows_to_codes(rows) if rows else []
+        return _rows_to_stock_list_entries(rows, a_share_only) if rows else []
 
-    # 未指定日期：用 query_trade_dates 取最近交易日列表，按从新到旧依次尝试
-    # （今天虽是交易日，但盘中或未结算时 query_all_stock(今天) 可能仍为空）
     for day_str in _get_trade_days_baostock():
         rows, _ = query_one_day(day_str)
         if rows:
-            return rows_to_codes(rows)
+            return _rows_to_stock_list_entries(rows, a_share_only)
 
-    # 回退：query_trade_dates 失败或全部返回空时，按日历日向前尝试
     for i in range(try_days):
         d = datetime.now() - timedelta(days=i)
         day_str = d.strftime("%Y-%m-%d")
         rows, _ = query_one_day(day_str)
         if rows:
-            return rows_to_codes(rows)
+            return _rows_to_stock_list_entries(rows, a_share_only)
     return []
+
+
+def get_stock_list_baostock(day=None, a_share_only=True, try_days=10):
+    """
+    使用 baostock 获取股票列表（对应 query_all_stock）。
+
+    参数:
+        day: 交易日，格式 'YYYY-MM-DD' 或 'YYYYMMDD'；为空则用 query_trade_dates 取最近交易日
+        a_share_only: 是否只保留 A 股（默认 True，过滤掉指数、B 股等）
+        try_days: 当 day 为空且 query_trade_dates 不可用时，向前尝试的日历天数
+
+    返回:
+        list[str]: 股票代码列表，格式与项目一致，如 ['sh600000', 'sz000001']
+    """
+    return [c for c, _ in get_stock_list_baostock_entries(day, a_share_only, try_days)]
 
 
 def fetch_kline_data_baostock(stock_code, start_date=None, end_date=None, 
@@ -454,11 +508,12 @@ def fetch_stock_fundamental_worker(stock_code, latest_date=None):
         return None
 
 
-def fetch_one_baostock_worker(stock_code, start_date, end_date, max_retries=3):
+def fetch_one_baostock_worker(stock_code, start_date, end_date, max_retries=3, list_name=None):
     """
     供多进程调用的 worker：在独立进程中拉取单只股票 K 线 + 名称，避免 baostock SDK 线程安全问题。
     遇到 BrokenPipeError / 连接异常时自动重试（重新登录后再请求）。
     返回 (stock_code, stock_name, df)，df 为 None 表示拉取失败。
+    list_name: stock_list.txt 中的简称，在 query_stock_basic 失败时作为兜底。
     """
     global _BAOSTOCK_LOGGED_IN
 
@@ -473,7 +528,7 @@ def fetch_one_baostock_worker(stock_code, start_date, end_date, max_retries=3):
             )
             if df is None or df.empty:
                 return (stock_code, None, None)
-            name = get_stock_name_baostock(stock_code) or stock_code
+            name = get_stock_name_baostock(stock_code) or (list_name if list_name else None) or stock_code
             return (stock_code, name, df)
         except (BrokenPipeError, ConnectionError, OSError) as e:
             if attempt < max_retries:

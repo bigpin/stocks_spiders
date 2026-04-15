@@ -1,6 +1,7 @@
 import scrapy
 import json
 from items import EastMoneyItem
+from .baostock_helper import read_stock_list_txt
 from .stock_config import (
     EASTMONEY_API,
     FIELD_MAPPING,
@@ -18,8 +19,7 @@ class StockDetailSpider(scrapy.Spider):
         self._seen = 0
         if use_file and use_file.lower() == 'true':
             try:
-                with open(stock_file, 'r', encoding='utf-8') as f:
-                    self.stock_codes = [line.strip() for line in f if line.strip()]
+                self.stock_codes, _ = read_stock_list_txt(stock_file)
                 if not self.stock_codes:
                     self.logger.warning(f"股票代码文件 {stock_file} 为空，使用默认股票代码")
                     self.stock_codes = ['sh603288', 'sz000858']

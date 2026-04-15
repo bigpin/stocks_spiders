@@ -58,12 +58,16 @@ def main():
 
     # 1) 优先 baostock
     try:
-        from spiders.baostock_helper import get_stock_list_baostock
-        codes = get_stock_list_baostock(a_share_only=True)
-        if codes:
+        from spiders.baostock_helper import get_stock_list_baostock_entries
+        entries = get_stock_list_baostock_entries(a_share_only=True)
+        if entries:
             with open(stock_file_path, "w", encoding="utf-8") as f:
-                f.write("\n".join(codes))
-            print(f"[INFO] 股票列表已更新（baostock），共 {len(codes)} 只 -> {stock_file_path}")
+                for code, nm in entries:
+                    if nm:
+                        f.write(f"{code}\t{nm}\n")
+                    else:
+                        f.write(f"{code}\n")
+            print(f"[INFO] 股票列表已更新（baostock），共 {len(entries)} 只 -> {stock_file_path}")
             return 0
         print("[WARNING] baostock 返回空列表（可能为非交易日），尝试聚合接口...")
     except Exception as e:

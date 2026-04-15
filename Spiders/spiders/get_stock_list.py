@@ -54,8 +54,14 @@ class StockListSpider(scrapy.Spider):
                 current_page = int(result['page'])
                 
                 # 保存当前页的股票代码
-                stock_symbols = [item['symbol'] for item in result['data']]
-                self.save_stock_symbols(stock_symbols)
+                stock_rows = []
+                for item in result['data']:
+                    sym = item.get('symbol')
+                    if not sym:
+                        continue
+                    name = (item.get('name') or '').strip()
+                    stock_rows.append((sym, name))
+                self.save_stock_symbols(stock_rows)
                 
                 # 计算总页数
                 items_per_page = 80
@@ -86,12 +92,15 @@ class StockListSpider(scrapy.Spider):
         except Exception as e:
             self.logger.error(f"解析响应时出错: {str(e)} - URL: {response.url}")
     
-    def save_stock_symbols(self, symbols):
-        """将股票代码保存到文件中"""
+    def save_stock_symbols(self, stock_rows):
+        """将股票代码保存到文件中；stock_rows 为 (symbol, name) 元组列表，有名称时写「代码\\t名称」。"""
         try:
             with open(self.output_file, 'a', encoding='utf-8') as f:
-                for symbol in symbols:
-                    f.write(f"{symbol}\n")
-            self.logger.info(f"成功保存 {len(symbols)} 个股票代码")
+                for symbol, name in stock_rows:
+                    if name:
+                        f.write(f"{symbol}\t{name}\n")
+                    else:
+                        f.write(f"{symbol}\n")
+            self.logger.info(f"成功保存 {len(stock_rows)} 个股票代码")
         except Exception as e:
             self.logger.error(f"保存股票代码时出错: {str(e)}")
