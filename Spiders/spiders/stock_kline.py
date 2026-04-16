@@ -14,15 +14,18 @@ from .stock_config import (
     SIGNAL_FILTERS,
     DATA_SOURCE,
     BAOSTOCK_FETCH_WORKERS,
+    BAOSTOCK_PIPELINE_FETCH_AND_COMPUTE,
 )
 from .baostock_helper import (
     fetch_kline_data_baostock_simple,
     get_stock_name_baostock,
     login_baostock,
     fetch_one_baostock_worker,
+    fetch_and_compute_one_baostock_worker,
     read_stock_list_txt,
 )
 from concurrent.futures import ProcessPoolExecutor, as_completed
+from concurrent.futures.process import BrokenProcessPool
 from .technical_indicators import TechnicalIndicators
 import sqlite3
 import bisect
@@ -209,9 +212,7 @@ class StockKlineSpider(scrapy.Spider):
         project_root = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
         candidates = [
             os.path.join(os.getcwd(), "stock_detail_data.csv"),
-            os.path.join(os.getcwd(), "eastmoney_data.csv"),
             os.path.join(project_root, "stock_detail_data.csv"),
-            os.path.join(project_root, "eastmoney_data.csv"),
         ]
         header_map = {
             '股票代码': 'stock_code',
@@ -223,6 +224,8 @@ class StockKlineSpider(scrapy.Spider):
             '成交量(手)': 'trading_volume'
         }
         fundamental_map = {}
+        total_rows = 0
+        valid_valuation_rows = 0
         for path in candidates:
             if not os.path.exists(path):
                 continue
@@ -236,6 +239,7 @@ class StockKlineSpider(scrapy.Spider):
                     for row in reader:
                         if not row:
                             continue
+                        total_rows += 1
                         code_index = indices.get('stock_code')
                         raw_code = row[code_index] if code_index is not None and code_index < len(row) else None
                         stock_code = self._normalize_stock_code(raw_code)
@@ -245,6 +249,8 @@ class StockKlineSpider(scrapy.Spider):
                         pb_index = indices.get('pb')
                         pe = self._parse_float(row[pe_index]) if pe_index is not None and pe_index < len(row) else None
                         pb = self._parse_float(row[pb_index]) if pb_index is not None and pb_index < len(row) else None
+                        if pe is not None or pb is not None:
+                            valid_valuation_rows += 1
                         fundamental_map[stock_code] = {
                             'pe': pe,
                             'pb': pb
@@ -253,7 +259,9 @@ class StockKlineSpider(scrapy.Spider):
                 self.logger.warning(f"加载估值缓存失败: {path}, 错误: {str(e)}")
                 continue
         if fundamental_map:
-            self.logger.warning(f"估值缓存加载完成: {len(fundamental_map)} 只股票")
+            self.logger.warning(
+                f"估值缓存加载完成: {len(fundamental_map)} 只股票（来源行数 {total_rows}，含有效PE/PB行 {valid_valuation_rows}）"
+            )
         return fundamental_map
 
     def _get_valuation(self, stock_code, df=None):
@@ -592,6 +600,136 @@ class StockKlineSpider(scrapy.Spider):
             self.logger.warning(f"开始拉取 {total} 只股票，{workers} 进程并行，每 50 只打印进度")
             results = {}
             done = 0
+
+            # 串行流式：拉完一只就计算一只，降低同一时间的网络请求压力
+            if workers <= 1:
+                self.logger.warning("启用串行流式模式：拉取完成一只股票后立即计算信号")
+                for code in self.stock_codes:
+                    try:
+                        results[code] = fetch_one_baostock_worker(
+                            code,
+                            self.start_date,
+                            self.end_date,
+                            3,
+                            self._list_name_by_code.get(code),
+                        )
+                    except Exception as e:
+                        self.logger.error(f"拉取 {code} 出错(串行流式): {e}")
+                        results[code] = (code, None, None)
+
+                    done += 1
+                    if done == 1 or done % 50 == 0 or done == total:
+                        self.logger.warning(f"已拉取 {done}/{total} 只")
+
+                    s_code, s_name, s_df = results[code]
+                    if s_df is not None and not s_df.empty:
+                        self.process_kline_data(s_code, s_name, s_df)
+
+                # 从 K 线结果中提取估值写入 CSV（替代独立的估值抓取阶段）
+                self._export_valuation_csv(results)
+                return
+
+            # 并行流水线：每个子进程“拉取后立刻计算”，主进程仅处理 I/O
+            if BAOSTOCK_PIPELINE_FETCH_AND_COMPUTE:
+                self.logger.warning("启用并行流水线模式：子进程拉取K线后立即计算信号，主进程负责写入/导出")
+                try:
+                    with ProcessPoolExecutor(max_workers=workers) as executor:
+                        futures = {
+                            executor.submit(
+                                fetch_and_compute_one_baostock_worker,
+                                code,
+                                self.start_date,
+                                self.end_date,
+                                INDICATORS_CONFIG,
+                                SIGNAL_FILTERS,
+                                self.current_time,
+                                3,
+                                self._list_name_by_code.get(code),
+                            ): code
+                            for code in self.stock_codes
+                        }
+
+                        pool_broken = False
+                        pool_broken_reason = None
+                        for future in as_completed(futures, timeout=7200):
+                            code = futures[future]
+                            try:
+                                res = future.result(timeout=180)
+                            except TimeoutError:
+                                self.logger.error(f"拉取+计算 {code} 超时(180s)，跳过")
+                                res = {'stock_code': code, 'stock_name': code, 'skip': True, 'reason': '超时'}
+                            except Exception as e:
+                                is_broken = isinstance(e, (BrokenProcessPool, BrokenPipeError))
+                                if not is_broken:
+                                    if isinstance(e, OSError) and "Broken pipe" in str(e):
+                                        is_broken = True
+                                if is_broken and not pool_broken:
+                                    pool_broken = True
+                                    pool_broken_reason = str(e)
+                                    self.logger.error(
+                                        f"进程池通信异常（流水线），将回退到串行流式。原因: {pool_broken_reason}"
+                                    )
+                                    for f in futures.keys():
+                                        if not f.done():
+                                            f.cancel()
+                                    break
+                                self.logger.error(f"拉取+计算 {code} 出错: {e}")
+                                res = {'stock_code': code, 'stock_name': code, 'skip': True, 'reason': str(e)}
+
+                            # 处理结果（写文件/写库/更新极值等 I/O）
+                            try:
+                                self._process_compute_result(res)
+                            except Exception as e:
+                                self.logger.error(f"处理 {code} 流水线结果出错: {e}")
+
+                            # 估值 CSV 只需要最后一行：用 df.tail(1) 降低内存
+                            df = res.get('df')
+                            if df is not None and hasattr(df, "empty") and not df.empty:
+                                name = res.get('stock_name') or code
+                                results[code] = (code, name, df.tail(1))
+                            else:
+                                results[code] = (code, res.get('stock_name') or code, None)
+
+                            done += 1
+                            if done == 1 or done % 50 == 0 or done == total:
+                                self.logger.warning(f"已拉取+计算 {done}/{total} 只")
+
+                        if pool_broken:
+                            raise BrokenProcessPool(pool_broken_reason or "process pool broken")
+                except BrokenProcessPool as e:
+                    # 回退到串行流式（稳定优先）
+                    self.logger.warning(f"流水线并行失败，回退串行流式: {e}")
+                    results = {}
+                    done = 0
+                    for code in self.stock_codes:
+                        try:
+                            res = fetch_and_compute_one_baostock_worker(
+                                code,
+                                self.start_date,
+                                self.end_date,
+                                INDICATORS_CONFIG,
+                                SIGNAL_FILTERS,
+                                self.current_time,
+                                3,
+                                self._list_name_by_code.get(code),
+                            )
+                        except Exception as e2:
+                            self.logger.error(f"串行流式 拉取+计算 {code} 出错: {e2}")
+                            res = {'stock_code': code, 'stock_name': code, 'skip': True, 'reason': str(e2)}
+
+                        self._process_compute_result(res)
+                        df = res.get('df')
+                        if df is not None and hasattr(df, "empty") and not df.empty:
+                            results[code] = (code, res.get('stock_name') or code, df.tail(1))
+                        else:
+                            results[code] = (code, res.get('stock_name') or code, None)
+
+                        done += 1
+                        if done == 1 or done % 50 == 0 or done == total:
+                            self.logger.warning(f"已拉取+计算 {done}/{total} 只")
+
+                self._export_valuation_csv(results)
+                return
             try:
                 with ProcessPoolExecutor(max_workers=workers) as executor:
                     futures = {
@@ -605,19 +743,46 @@ class StockKlineSpider(scrapy.Spider):
                         ): code
                         for code in self.stock_codes
                     }
+                    pool_broken = False
+                    pool_broken_reason = None
                     for future in as_completed(futures, timeout=7200):
                         code = futures[future]
                         try:
                             results[code] = future.result(timeout=120)
+                            if pool_broken:
+                                # If pool already detected broken, still consume results quietly.
+                                pass
                         except TimeoutError:
                             self.logger.error(f"拉取 {code} 超时(120s)，跳过")
                             results[code] = (code, None, None)
                         except Exception as e:
+                            # If the process pool is broken (worker crash / IPC pipe broken),
+                            # continuing to wait will produce大量重复错误。检测到后立刻回退串行。
+                            is_broken = isinstance(e, (BrokenProcessPool, BrokenPipeError))
+                            if not is_broken:
+                                # Some platforms wrap as OSError: [Errno 32] Broken pipe
+                                if isinstance(e, OSError) and "Broken pipe" in str(e):
+                                    is_broken = True
+                            if is_broken and not pool_broken:
+                                pool_broken = True
+                                pool_broken_reason = str(e)
+                                self.logger.error(
+                                    f"进程池通信异常（可能并发过高或子进程崩溃），将回退串行拉取。原因: {pool_broken_reason}"
+                                )
+                                # Cancel remaining tasks best-effort to stop error spam.
+                                for f in futures.keys():
+                                    if not f.done():
+                                        f.cancel()
+                                # Break out: executor will exit context and we fallback below.
+                                break
+                            # Non-fatal per-stock error: keep going but avoid刷屏
                             self.logger.error(f"拉取 {code} 出错: {e}")
                             results[code] = (code, None, None)
                         done += 1
                         if done == 1 or done % 50 == 0 or done == total:
                             self.logger.warning(f"已拉取 {done}/{total} 只")
+                    if pool_broken:
+                        raise BrokenProcessPool(pool_broken_reason or "process pool broken")
             except PermissionError as e:
                 self.logger.warning(f"进程池不可用，改为串行拉取: {e}")
                 results = {}
@@ -633,6 +798,25 @@ class StockKlineSpider(scrapy.Spider):
                         )
                     except Exception as e2:
                         self.logger.error(f"拉取 {code} 出错: {e2}")
+                        results[code] = (code, None, None)
+                    done += 1
+                    if done == 1 or done % 50 == 0 or done == total:
+                        self.logger.warning(f"已拉取 {done}/{total} 只")
+            except BrokenProcessPool as e:
+                self.logger.warning(f"并行拉取失败，改为串行拉取: {e}")
+                results = {}
+                done = 0
+                for code in self.stock_codes:
+                    try:
+                        results[code] = fetch_one_baostock_worker(
+                            code,
+                            self.start_date,
+                            self.end_date,
+                            3,
+                            self._list_name_by_code.get(code),
+                        )
+                    except Exception as e2:
+                        self.logger.error(f"拉取 {code} 出错(串行): {e2}")
                         results[code] = (code, None, None)
                     done += 1
                     if done == 1 or done % 50 == 0 or done == total:

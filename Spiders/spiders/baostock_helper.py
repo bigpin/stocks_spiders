@@ -542,3 +542,49 @@ def fetch_one_baostock_worker(stock_code, start_date, end_date, max_retries=3, l
                 return (stock_code, None, None)
         except Exception:
             return (stock_code, None, None)
+
+
+def fetch_and_compute_one_baostock_worker(
+    stock_code,
+    start_date,
+    end_date,
+    indicators_config,
+    signal_filters,
+    current_time,
+    max_retries=3,
+    list_name=None,
+):
+    """
+    并行流水线 worker：在同一个子进程中完成
+      1) 拉取单只股票 K 线（baostock）
+      2) 计算技术指标 + 信号分析（CPU）
+    主进程只负责 I/O（写文件/SQLite），避免“先全量拉取再统一计算”的峰值与内存压力。
+
+    返回：compute_signals_for_stock 的 dict（包含 df/heat_score/kdj_analysis 等）。
+    """
+    from .signal_compute_worker import compute_signals_for_stock
+
+    code, name, df = fetch_one_baostock_worker(
+        stock_code=stock_code,
+        start_date=start_date,
+        end_date=end_date,
+        max_retries=max_retries,
+        list_name=list_name,
+    )
+
+    if df is None or getattr(df, "empty", True):
+        return {
+            'stock_code': stock_code,
+            'stock_name': name or stock_code,
+            'skip': True,
+            'reason': 'K线拉取失败',
+        }
+
+    return compute_signals_for_stock(
+        stock_code=code,
+        stock_name=name or code,
+        df=df,
+        indicators_config=indicators_config,
+        signal_filters=signal_filters,
+        current_time=current_time,
+    )

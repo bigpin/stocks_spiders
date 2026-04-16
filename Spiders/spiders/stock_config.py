@@ -67,7 +67,12 @@ DATA_SOURCE = 'baostock'  # 默认使用 baostock
 
 # baostock 并行拉取进程数（仅当 DATA_SOURCE='baostock' 时生效）
 # 实测 8 进程稳定；12 进程会出现大量 Broken pipe，不建议超过 8
-BAOSTOCK_FETCH_WORKERS = 8
+BAOSTOCK_FETCH_WORKERS = 5
+
+# baostock 并行模式是否在子进程内“拉取后立即计算信号”（流水线模式）
+# True：每个子进程 fetch K线 -> 计算指标/信号 -> 返回结果给主进程做 I/O（写文件/SQLite/导出）
+# False：维持旧模式（先拉完全部，再单独开计算进程池）
+BAOSTOCK_PIPELINE_FETCH_AND_COMPUTE = True
 
 # K 线拉取完成后，信号计算（指标+analyze_signals）的并行进程数；0 表示串行
 # 纯 CPU 计算，与 baostock 无关；设为 CPU 核数即可（过多会增加内存和 pickle 开销）
