@@ -11,9 +11,35 @@ import pandas as pd
 from datetime import datetime
 import time
 
+from .stock_config import BAOSTOCK_RELOGIN_EVERY_N_REQUESTS
+
 
 # 模块级登录状态，整个进程内只登录一次
 _BAOSTOCK_LOGGED_IN = False
+# 当前进程内已执行的 K 线 history 请求次数（用于周期性重登）
+_BAOSTOCK_KLINE_REQUEST_COUNT = 0
+
+
+def _force_relogin_baostock():
+    """logout 后重新 login，用于长连接被服务端掐断前的主动换会话。"""
+    global _BAOSTOCK_LOGGED_IN
+    _BAOSTOCK_LOGGED_IN = False
+    try:
+        bs.logout()
+    except Exception:
+        pass
+    login_baostock()
+
+
+def _maybe_relogin_every_n_kline_requests():
+    """每 N 次 K 线拉取（query_history_k_data_plus）在本进程内强制重登一次。"""
+    global _BAOSTOCK_KLINE_REQUEST_COUNT
+    n = int(BAOSTOCK_RELOGIN_EVERY_N_REQUESTS or 0)
+    if n <= 0:
+        return
+    _BAOSTOCK_KLINE_REQUEST_COUNT += 1
+    if _BAOSTOCK_KLINE_REQUEST_COUNT % n == 0:
+        _force_relogin_baostock()
 
 
 def parse_stock_list_line(line):
@@ -253,7 +279,8 @@ def fetch_kline_data_baostock(stock_code, start_date=None, end_date=None,
         if verbose:
             print(f"    使用baostock获取数据: {bs_code}, {start_date} 到 {end_date}")
         
-        # 确保已登录（全局只登录一次）
+        _maybe_relogin_every_n_kline_requests()
+        # 确保已登录（全局只登录一次；上面周期性重登时已登录则此处为 no-op）
         login_baostock()
         
         # 查询K线数据（含估值字段 peTTM/pbMRQ，省去单独的估值抓取阶段）

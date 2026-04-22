@@ -30,6 +30,12 @@ from .technical_indicators import TechnicalIndicators
 import sqlite3
 import bisect
 
+
+def _min_distinct_signal_types_for_output():
+    """最近 N 天至少几种不同 signal_type 才写入信号文件；原逻辑为 len>5（至少 6 种），默认 6 保持兼容。"""
+    return int(SIGNAL_FILTERS.get('signal_output', {}).get('min_distinct_signal_types', 6))
+
+
 class StockKlineSpider(scrapy.Spider):
     name = "stock_kline"
     allowed_domains = ["eastmoney.com", "push2his.eastmoney.com"]
@@ -651,7 +657,9 @@ class StockKlineSpider(scrapy.Spider):
 
                         pool_broken = False
                         pool_broken_reason = None
-                        for future in as_completed(futures, timeout=7200):
+                        # 勿对 as_completed 设整批 wall-clock 超时：5196 只拉取+计算远超 2 小时，
+                        # 否则会 TimeoutError 中断 start_requests。单任务仍用 future.result(timeout=...) 控住。
+                        for future in as_completed(futures):
                             code = futures[future]
                             try:
                                 res = future.result(timeout=180)
@@ -745,7 +753,7 @@ class StockKlineSpider(scrapy.Spider):
                     }
                     pool_broken = False
                     pool_broken_reason = None
-                    for future in as_completed(futures, timeout=7200):
+                    for future in as_completed(futures):
                         code = futures[future]
                         try:
                             results[code] = future.result(timeout=120)
@@ -854,7 +862,7 @@ class StockKlineSpider(scrapy.Spider):
                             ): s_code
                             for s_code, s_name, s_df in valid_items
                         }
-                        for future in as_completed(compute_futures, timeout=7200):
+                        for future in as_completed(compute_futures):
                             code = compute_futures[future]
                             try:
                                 compute_results[code] = future.result(timeout=60)
@@ -1066,8 +1074,8 @@ class StockKlineSpider(scrapy.Spider):
                             signal_type = signal['signal']
                             signal_type_count[signal_type] = signal_type_count.get(signal_type, 0) + 1
                         
-                        # 有当出现六种以上不同信号时才输出
-                        if len(signal_type_count) > 5:
+                        # 最近3天至少 N 种不同信号类型才输出（可调 signal_output.min_distinct_signal_types）
+                        if len(signal_type_count) >= _min_distinct_signal_types_for_output():
                             # 写入文件
                             self.write_to_signal_file(f"\n股票 {data['data']['name']}({stock_code}) 股票信号分析结果")
                             self.write_to_signal_file(f"总体成功率: {kdj_analysis['overall_success_rate']:.2f}%")
@@ -1258,7 +1266,7 @@ class StockKlineSpider(scrapy.Spider):
                 st = signal['signal']
                 signal_type_count[st] = signal_type_count.get(st, 0) + 1
 
-            if len(signal_type_count) > 5:
+            if len(signal_type_count) >= _min_distinct_signal_types_for_output():
                 self.write_to_signal_file(f"\n股票 {stock_name}({stock_code}) 股票信号分析结果")
                 self.write_to_signal_file(f"总体成功率: {kdj_analysis['overall_success_rate']:.2f}%")
                 self.write_to_signal_file(f"总信号数: {kdj_analysis['total_signals']}")
@@ -1385,7 +1393,7 @@ class StockKlineSpider(scrapy.Spider):
                         signal_type_count[signal_type] = signal_type_count.get(signal_type, 0) + 1
                     
                     # 有当出现六种以上不同信号时才输出
-                    if len(signal_type_count) > 5:
+                    if len(signal_type_count) >= _min_distinct_signal_types_for_output():
                         # 写入文件
                         self.write_to_signal_file(f"\n股票 {stock_name}({stock_code}) 股票信号分析结果")
                         self.write_to_signal_file(f"总体成功率: {kdj_analysis['overall_success_rate']:.2f}%")
@@ -1884,7 +1892,12 @@ class StockKlineSpider(scrapy.Spider):
                     'signals': [],
                     'recent_signals': []
                 }
-            
+
+            sq_thr = SIGNAL_FILTERS.get('signal_quality') or {}
+            min_exc = int(sq_thr.get('min_history_occurrences_exclusive', 8))
+            min_sr = float(sq_thr.get('min_signal_success_rate', 60.0))
+            min_osr = float(sq_thr.get('min_overall_success_rate', 50.0))
+
             for i in range(len(last_3_days)):
                 current_row = last_3_days.iloc[i]
                 if i > 0:
@@ -2000,9 +2013,9 @@ class StockKlineSpider(scrapy.Spider):
                         valuation_blocked += 1
                     if not passed:
                         continue
-                    if (signal_stats[signal_type]['total'] > 8 and 
-                        success_rates[signal_type]['success_rate'] >= 60 and  
-                        overall_success_rate >= 50):
+                    if (signal_stats[signal_type]['total'] > min_exc
+                            and success_rates[signal_type]['success_rate'] >= min_sr
+                            and overall_success_rate >= min_osr):
                         
                         # 根据信号类型收集对应的指标数据
                         signal_data = {

@@ -375,9 +375,13 @@ def _analyze_signals(df, stock_code, current_time, signal_filters):
                     valuation_blocked += 1
                 if not passed:
                     continue
-                if (signal_stats[signal_type]['total'] > 8
-                        and success_rates[signal_type]['success_rate'] >= 60
-                        and overall_success_rate >= 50):
+                sq = signal_filters.get('signal_quality') or {}
+                min_exc = int(sq.get('min_history_occurrences_exclusive', 8))
+                min_sr = float(sq.get('min_signal_success_rate', 60.0))
+                min_osr = float(sq.get('min_overall_success_rate', 50.0))
+                if (signal_stats[signal_type]['total'] > min_exc
+                        and success_rates[signal_type]['success_rate'] >= min_sr
+                        and overall_success_rate >= min_osr):
                     signal_data = {
                         'date': last_3_days.index[i],
                         'signal_type': signal_type,

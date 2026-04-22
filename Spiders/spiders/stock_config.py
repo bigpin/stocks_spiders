@@ -67,7 +67,10 @@ DATA_SOURCE = 'baostock'  # 默认使用 baostock
 
 # baostock 并行拉取进程数（仅当 DATA_SOURCE='baostock' 时生效）
 # 实测 8 进程稳定；12 进程会出现大量 Broken pipe，不建议超过 8
-BAOSTOCK_FETCH_WORKERS = 5
+BAOSTOCK_FETCH_WORKERS = 2
+
+# 每个子进程内，每 N 次 K 线 query_history_k_data_plus 后强制 logout+login（0 表示关闭）
+BAOSTOCK_RELOGIN_EVERY_N_REQUESTS = 2
 
 # baostock 并行模式是否在子进程内“拉取后立即计算信号”（流水线模式）
 # True：每个子进程 fetch K线 -> 计算指标/信号 -> 返回结果给主进程做 I/O（写文件/SQLite/导出）
@@ -182,9 +185,19 @@ SIGNAL_FILTERS = {
     'valuation': {
         'enable': True,
         'pe_min': 0,
-        'pe_max': 80,
+        'pe_max': 85,                 # 原 80，适当放宽
         'pb_min': 0,
-        'pb_max': 8
+        'pb_max': 9                   # 原 8，适当放宽
+    },
+    # 历史回测统计：近3日「高胜率信号」条件（原 total>8 且≥60% 且整体≥50%）
+    'signal_quality': {
+        'min_history_occurrences_exclusive': 7,  # total > 此值；原硬编码 8，先前放宽到 5，现收紧 1 档
+        'min_signal_success_rate': 60.0,
+        'min_overall_success_rate': 50.0,
+    },
+    # 写出到 kdj_signals / DB：最近3天至少几种不同 signal_type 才输出（原 >5 即至少 6 种；先前放宽到 3，现收紧 1 档→4）
+    'signal_output': {
+        'min_distinct_signal_types': 5,
     },
     # 其他过滤
     'exclude_st': True,
