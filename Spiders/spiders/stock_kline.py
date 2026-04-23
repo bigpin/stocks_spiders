@@ -616,7 +616,7 @@ class StockKlineSpider(scrapy.Spider):
                             code,
                             self.start_date,
                             self.end_date,
-                            3,
+                            5,
                             self._list_name_by_code.get(code),
                         )
                     except Exception as e:
@@ -649,7 +649,7 @@ class StockKlineSpider(scrapy.Spider):
                                 INDICATORS_CONFIG,
                                 SIGNAL_FILTERS,
                                 self.current_time,
-                                3,
+                                5,
                                 self._list_name_by_code.get(code),
                             ): code
                             for code in self.stock_codes
@@ -718,7 +718,7 @@ class StockKlineSpider(scrapy.Spider):
                                 INDICATORS_CONFIG,
                                 SIGNAL_FILTERS,
                                 self.current_time,
-                                3,
+                                5,
                                 self._list_name_by_code.get(code),
                             )
                         except Exception as e2:
@@ -746,7 +746,7 @@ class StockKlineSpider(scrapy.Spider):
                             code,
                             self.start_date,
                             self.end_date,
-                            3,
+                            5,
                             self._list_name_by_code.get(code),
                         ): code
                         for code in self.stock_codes
@@ -801,7 +801,7 @@ class StockKlineSpider(scrapy.Spider):
                             code,
                             self.start_date,
                             self.end_date,
-                            3,
+                            5,
                             self._list_name_by_code.get(code),
                         )
                     except Exception as e2:
@@ -820,7 +820,7 @@ class StockKlineSpider(scrapy.Spider):
                             code,
                             self.start_date,
                             self.end_date,
-                            3,
+                            5,
                             self._list_name_by_code.get(code),
                         )
                     except Exception as e2:

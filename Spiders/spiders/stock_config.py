@@ -70,7 +70,13 @@ DATA_SOURCE = 'baostock'  # 默认使用 baostock
 BAOSTOCK_FETCH_WORKERS = 2
 
 # 每个子进程内，每 N 次 K 线 query_history_k_data_plus 后强制 logout+login（0 表示关闭）
-BAOSTOCK_RELOGIN_EVERY_N_REQUESTS = 2
+# 不宜过小（如 <30）：过于频繁重登易被服务端断连；建议 50～150
+BAOSTOCK_RELOGIN_EVERY_N_REQUESTS = 40
+
+# 每只股票任务开始前休眠（秒），减轻多进程同时打满连接；仍频繁 Broken pipe 时可试 0.15～0.35
+BAOSTOCK_INTER_REQUEST_SLEEP_SEC = 0.2
+# 在上一项基础上再随机加 [0, jitter) 秒，错开唤醒；可与 sleep 二选一或组合
+BAOSTOCK_INTER_REQUEST_JITTER_SEC = 0.2
 
 # baostock 并行模式是否在子进程内“拉取后立即计算信号”（流水线模式）
 # True：每个子进程 fetch K线 -> 计算指标/信号 -> 返回结果给主进程做 I/O（写文件/SQLite/导出）

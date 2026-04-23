@@ -6,12 +6,27 @@ baostock 数据获取辅助函数
 """
 
 import os
+import random
 import baostock as bs
 import pandas as pd
 from datetime import datetime
 import time
 
-from .stock_config import BAOSTOCK_RELOGIN_EVERY_N_REQUESTS
+from .stock_config import (
+    BAOSTOCK_INTER_REQUEST_JITTER_SEC,
+    BAOSTOCK_INTER_REQUEST_SLEEP_SEC,
+    BAOSTOCK_RELOGIN_EVERY_N_REQUESTS,
+)
+
+
+def _sleep_inter_request_if_configured():
+    """每只股票任务前可选休眠，降低并发撞车导致的 Broken pipe。"""
+    base = float(BAOSTOCK_INTER_REQUEST_SLEEP_SEC or 0)
+    jitter = float(BAOSTOCK_INTER_REQUEST_JITTER_SEC or 0)
+    if base <= 0 and jitter <= 0:
+        return
+    extra = random.uniform(0, jitter) if jitter > 0 else 0.0
+    time.sleep(max(0.0, base) + extra)
 
 
 # 模块级登录状态，整个进程内只登录一次
@@ -544,6 +559,7 @@ def fetch_one_baostock_worker(stock_code, start_date, end_date, max_retries=3, l
     """
     global _BAOSTOCK_LOGGED_IN
 
+    _sleep_inter_request_if_configured()
     for attempt in range(1, max_retries + 1):
         try:
             login_baostock()
