@@ -475,6 +475,13 @@ def validate_date(date_str):
         return False, f"日期无效：{e}"
 
 if __name__ == "__main__":
+    # Scrapy / scrapy.cfg 依赖「当前目录为项目根」；launchd 的 WorkingDirectory 若受限，此处兜底
+    _project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    try:
+        os.chdir(_project_root)
+    except OSError as e:
+        print(f"警告: 无法切换到项目根目录 {_project_root}: {e}", file=sys.stderr)
+
     # 解析命令行参数
     parser = argparse.ArgumentParser(description='股票数据爬虫脚本')
     parser.add_argument('--date', type=str, help='指定运行日期，格式：YYYYMMDD（例如：20240101）。如果不指定，默认运行今天的数据')

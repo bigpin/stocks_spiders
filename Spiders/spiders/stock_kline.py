@@ -29,6 +29,7 @@ from concurrent.futures.process import BrokenProcessPool
 from .technical_indicators import TechnicalIndicators
 import sqlite3
 import bisect
+import time
 
 
 def _min_distinct_signal_types_for_output():
@@ -639,6 +640,7 @@ class StockKlineSpider(scrapy.Spider):
             if BAOSTOCK_PIPELINE_FETCH_AND_COMPUTE:
                 self.logger.warning("启用并行流水线模式：子进程拉取K线后立即计算信号，主进程负责写入/导出")
                 try:
+                    failed_kline_codes = set()
                     with ProcessPoolExecutor(max_workers=workers) as executor:
                         futures = {
                             executor.submit(
@@ -690,6 +692,13 @@ class StockKlineSpider(scrapy.Spider):
                             except Exception as e:
                                 self.logger.error(f"处理 {code} 流水线结果出错: {e}")
 
+                            # 记录 K 线拉取失败的股票，留待末尾集中重试（避免在高并发阶段反复打爆连接）
+                            try:
+                                if res.get('skip') and res.get('reason') == 'K线拉取失败':
+                                    failed_kline_codes.add(code)
+                            except Exception:
+                                pass
+
                             # 估值 CSV 只需要最后一行：用 df.tail(1) 降低内存
                             df = res.get('df')
                             if df is not None and hasattr(df, "empty") and not df.empty:
@@ -701,6 +710,61 @@ class StockKlineSpider(scrapy.Spider):
                             done += 1
                             if done == 1 or done % 50 == 0 or done == total:
                                 self.logger.warning(f"已拉取+计算 {done}/{total} 只")
+
+                        # 末尾集中重试：只针对“K线拉取失败”的股票再跑几轮（串行、可控）
+                        if (not pool_broken) and failed_kline_codes:
+                            retry_rounds = 3
+                            self.logger.warning(
+                                f"流水线阶段 K线拉取失败 {len(failed_kline_codes)} 只，开始末尾串行重试 {retry_rounds} 轮"
+                            )
+                            remaining = set(failed_kline_codes)
+                            for r in range(1, retry_rounds + 1):
+                                if not remaining:
+                                    break
+                                self.logger.warning(f"K线失败重试第 {r}/{retry_rounds} 轮，待重试 {len(remaining)} 只")
+                                # 小间隔，避免立刻重放导致继续失败
+                                if r > 1:
+                                    time.sleep(min(2 * r, 8))
+                                next_remaining = set()
+                                for retry_code in list(remaining):
+                                    try:
+                                        retry_res = fetch_and_compute_one_baostock_worker(
+                                            retry_code,
+                                            self.start_date,
+                                            self.end_date,
+                                            INDICATORS_CONFIG,
+                                            SIGNAL_FILTERS,
+                                            self.current_time,
+                                            5,
+                                            self._list_name_by_code.get(retry_code),
+                                        )
+                                    except Exception as e:
+                                        retry_res = {
+                                            'stock_code': retry_code,
+                                            'stock_name': retry_code,
+                                            'skip': True,
+                                            'reason': str(e),
+                                        }
+
+                                    try:
+                                        self._process_compute_result(retry_res)
+                                    except Exception as e:
+                                        self.logger.error(f"处理 {retry_code} 重试结果出错: {e}")
+
+                                    df = retry_res.get('df')
+                                    if df is not None and hasattr(df, "empty") and not df.empty:
+                                        name = retry_res.get('stock_name') or retry_code
+                                        results[retry_code] = (retry_code, name, df.tail(1))
+                                    else:
+                                        results[retry_code] = (retry_code, retry_res.get('stock_name') or retry_code, None)
+
+                                    # 若仍是 K 线拉取失败，则下轮继续重试
+                                    if retry_res.get('skip') and retry_res.get('reason') == 'K线拉取失败':
+                                        next_remaining.add(retry_code)
+                                remaining = next_remaining
+
+                            if remaining:
+                                self.logger.error(f"K线拉取失败仍未恢复 {len(remaining)} 只（已重试 {retry_rounds} 轮）")
 
                         if pool_broken:
                             raise BrokenProcessPool(pool_broken_reason or "process pool broken")
