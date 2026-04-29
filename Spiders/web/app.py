@@ -163,7 +163,8 @@ def get_calendar_events():
         SELECT id, stock_code, stock_name, insert_date, insert_price,
                highest_price, highest_price_date, highest_change_rate, highest_days,
                lowest_price, lowest_price_date, lowest_change_rate, lowest_days,
-               buy_day_change_rate, next_day_change_rate, trade_heat_score
+               buy_day_change_rate, next_day_change_rate, trade_heat_score,
+               overall_success_rate
         FROM stock_signals
         WHERE 1=1
     """
@@ -205,6 +206,7 @@ def get_calendar_events():
             'buy_day_change_rate': row[13] if len(row) > 13 else None,
             'next_day_change_rate': row[14] if len(row) > 14 else None,
             'trade_heat_score': row[15] if len(row) > 15 else None,
+            'overall_success_rate': row[16] if len(row) > 16 else None,
         })
     conn.close()
     return jsonify({'events': events})

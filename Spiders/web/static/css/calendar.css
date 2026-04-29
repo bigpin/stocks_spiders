@@ -990,8 +990,8 @@ select.control-input optgroup {
     padding: var(--spacing-lg);
     margin-bottom: var(--spacing-sm);
     box-shadow: var(--shadow-sm);
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+    display: flex;
+    flex-direction: column;
     gap: var(--spacing-md);
     transition: all 0.2s ease;
 }
@@ -999,6 +999,30 @@ select.control-input optgroup {
 .stats-panel:hover {
     box-shadow: var(--shadow-md);
     border-color: var(--border-dark);
+}
+
+.stats-panel-section {
+    display: flex;
+    flex-direction: column;
+    gap: var(--spacing-xs);
+}
+
+.stats-panel-section--filtered {
+    padding-top: var(--spacing-md);
+    border-top: 1px solid var(--border-light);
+}
+
+.stats-panel-caption {
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--text-secondary);
+    letter-spacing: 0.02em;
+}
+
+.stats-panel-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+    gap: var(--spacing-md);
 }
 .stat-item {
     display: flex;

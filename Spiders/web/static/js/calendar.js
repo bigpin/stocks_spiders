@@ -477,7 +477,7 @@ function resetCalcFilters() {
     document.getElementById("filter-buy-day-change-max").value = "10";
     document.getElementById("filter-next-day-change-min").value = "-10";
     document.getElementById("filter-next-day-change-max").value = "10";
-    document.getElementById("filter-confidence").value = "80";
+    document.getElementById("filter-reach-rate").value = "80";
     document.getElementById("filter-buy-day-change-min").disabled = true;
     document.getElementById("filter-buy-day-change-max").disabled = true;
     document.getElementById("filter-next-day-change-min").disabled = true;
@@ -494,6 +494,10 @@ function resetCalcFilters() {
     updateCalc();
 }
 function updateCalc() {
+    const reachRateInput = document.getElementById("filter-reach-rate");
+    const minReachRate = reachRateInput && reachRateInput.value !== ""
+        ? Math.max(0, Math.min(100, parseFloat(reachRateInput.value)))
+        : 0;
     const filteredRecords = getFilteredRecords();
     const profitTargets = [];
     const stopLosses = [];
@@ -601,11 +605,12 @@ function updateCalc() {
         cellData.push(rowData);
     });
 
-    // ── 排序：综合得分（触达率 × 止盈率，强制卖出开启时改用全量均值）───
+    // ── 排序：综合得分（先满足触达率筛选，再参与 Top10/Bottom10）──────
     const allScores = [];
     cellData.forEach((row, r) => {
         row.forEach((d, c) => {
-            if (d.hitCount > 0 || d.forceSellCount > 0) {
+            const passReachRate = d.hitRate >= minReachRate;
+            if (passReachRate && (d.hitCount > 0 || d.forceSellCount > 0)) {
                 const score = d.forceSellEnabled
                     ? (d.avgAllProfit != null ? d.avgAllProfit : -999)
                     : ((d.avgHitProfit != null ? d.avgHitProfit : -999) * (d.hitRate / 100.0));
@@ -645,6 +650,8 @@ function updateCalc() {
             const isPositive = refAvg != null && refAvg > 0;
             const isNegative = refAvg != null && refAvg < 0;
 
+            const isBelowReachRate = d.hitRate < minReachRate;
+
             // ── 着色逻辑 ─────────────────────────────────────────────────
             // 底色：先按正/负给一个基础色，再由强规则覆盖
             let bgColor = isPositive ? "#f1f8e9" : isNegative ? "#fff3f3" : "";
@@ -676,11 +683,24 @@ function updateCalc() {
                 }
             }
 
+            if (isBelowReachRate) {
+                bgColor = "#f1f3f5";
+                borderLeft = "3px solid #c7cdd4";
+                fw = "400";
+            }
+
             cell.className = "text-center";
             cell.style.backgroundColor = bgColor;
             cell.style.borderLeft = borderLeft;
             cell.style.fontWeight = fw;
             cell.style.padding = "4px 3px";
+            if (isBelowReachRate) {
+                cell.style.color = "#8a949e";
+                cell.style.filter = "grayscale(0.85)";
+            } else {
+                cell.style.color = "";
+                cell.style.filter = "";
+            }
             if (top10Set.has(key)) {
                 cell.classList.add("matrix-top10");
                 const r = topRankMap.get(key);
@@ -1203,6 +1223,76 @@ async function loadStats() {
         console.error("Failed to load stats:", error);
     }
 }
+
+function setStatChangeClass(el, avg) {
+    if (!el) return;
+    el.classList.remove("positive", "negative");
+    if (avg == null || isNaN(avg)) return;
+    if (avg > 0) el.classList.add("positive");
+    else if (avg < 0) el.classList.add("negative");
+}
+
+function updateFilteredTimelineStats() {
+    const n = records.length;
+    const elSig = document.getElementById("stat-filter-signals");
+    const elStocks = document.getElementById("stat-filter-stocks");
+    const elSucc = document.getElementById("stat-filter-success");
+    const elHigh = document.getElementById("stat-filter-highest");
+    const elLow = document.getElementById("stat-filter-lowest");
+    if (!elSig || !elStocks || !elSucc || !elHigh || !elLow) return;
+
+    if (n === 0) {
+        elSig.textContent = "0";
+        elStocks.textContent = "0";
+        elSucc.textContent = "-";
+        elHigh.textContent = "-";
+        elLow.textContent = "-";
+        setStatChangeClass(elHigh, null);
+        setStatChangeClass(elLow, null);
+        return;
+    }
+
+    elSig.textContent = String(n);
+    const stockSet = new Set();
+    records.forEach(r => {
+        if (r.stockCode) stockSet.add(r.stockCode);
+    });
+    elStocks.textContent = String(stockSet.size);
+
+    const osrVals = records
+        .map(r => r.overallSuccessRate)
+        .filter(v => v !== null && v !== undefined && !isNaN(v));
+    if (osrVals.length > 0) {
+        const avgOsr = osrVals.reduce((a, b) => a + b, 0) / osrVals.length;
+        elSucc.textContent = avgOsr.toFixed(2) + "%";
+    } else {
+        elSucc.textContent = "-";
+    }
+
+    const highVals = records
+        .map(r => r.highChange)
+        .filter(v => v !== null && v !== undefined && !isNaN(v));
+    if (highVals.length > 0) {
+        const avgH = highVals.reduce((a, b) => a + b, 0) / highVals.length;
+        elHigh.textContent = (avgH > 0 ? "+" : "") + avgH.toFixed(2) + "%";
+        setStatChangeClass(elHigh, avgH);
+    } else {
+        elHigh.textContent = "-";
+        setStatChangeClass(elHigh, null);
+    }
+
+    const lowVals = records
+        .map(r => r.lowChange)
+        .filter(v => v !== null && v !== undefined && !isNaN(v));
+    if (lowVals.length > 0) {
+        const avgL = lowVals.reduce((a, b) => a + b, 0) / lowVals.length;
+        elLow.textContent = (avgL > 0 ? "+" : "") + avgL.toFixed(2) + "%";
+        setStatChangeClass(elLow, avgL);
+    } else {
+        elLow.textContent = "-";
+        setStatChangeClass(elLow, null);
+    }
+}
 async function loadStockCodes() {
     try {
         const res = await fetch("/api/stock-codes");
@@ -1341,6 +1431,7 @@ async function reloadTimeline() {
             buyDayChangeRate: e.buy_day_change_rate != null ? Number(e.buy_day_change_rate) : null,
             nextDayChangeRate: e.next_day_change_rate != null ? Number(e.next_day_change_rate) : null,
             tradeHeatScore: e.trade_heat_score != null ? Number(e.trade_heat_score) : null,
+            overallSuccessRate: e.overall_success_rate != null ? Number(e.overall_success_rate) : null,
             dailyPrices: e.dailyPrices || null  // 每日价格数据
         };
         records.push(rec);
@@ -1376,6 +1467,7 @@ async function reloadTimeline() {
         pixelsPerDay = Math.max(0.5, Math.min(20, screenHeight / daysToShow));
     }
     renderTimeline();
+    updateFilteredTimelineStats();
     // 滚动到时间轴顶部（最新日期，因为时间轴已反转）
     const axis = document.getElementById("timeline-axis");
     if (axis) {
@@ -1550,6 +1642,13 @@ document.addEventListener("DOMContentLoaded", function() {
             updateCalc();
         });
         forceSellDaysInput.addEventListener("change", function() {
+            updateCalc();
+        });
+    }
+
+    const reachRateInput = document.getElementById("filter-reach-rate");
+    if (reachRateInput) {
+        reachRateInput.addEventListener("input", function() {
             updateCalc();
         });
     }

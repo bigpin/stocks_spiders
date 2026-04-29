@@ -17,11 +17,12 @@
 - 📊 **成功率统计**：计算信号的成功率和收益情况
 
 ### Web 可视化
-- 🎨 **现代化界面**：美观的 Web 界面展示分析结果
-- 📈 **时间轴视图**：可视化展示股票买入点和卖出点的时间线
-- 🔍 **多条件筛选**：支持按日期、股票代码、价格、涨跌幅等条件筛选
-- 📊 **收益矩阵分析**：止盈止损收益矩阵，支持动态参数调整
-- 📉 **统计信息**：总体统计数据展示
+- 🎨 **现代化界面**：单页多标签（时间轴 / 收益矩阵 / 数据列表），侧边栏可收起
+- 📈 **时间轴视图**：垂直时间轴展示买入点、最高价线、最低价线；Ctrl + 滚轮缩放；点击高亮同股
+- 📉 **统计双行**：**全库概览**（总信号、股票数、平均成功率、平均最高涨幅）+ **当前筛选后**（时间轴上实际展示的信号数、涉及股票、平均成功率、平均最高/最低涨幅）
+- 🔍 **多条件筛选**：日期、股票代码、买入价区间、买入日/次日涨跌（可选滑块）、**交易热度评分**区间等；矩阵侧另有跟踪天数、最高涨幅、强制卖出天数等
+- 📊 **止盈止损触达率矩阵**：按窗口内是否触及止盈/止损统计触达率、触发占比与均值；**触达率筛选阈值**（未达标格子置灰，且不参与 Top10 排名）；可选「未触达时强制持有后卖出」
+- 📋 **数据列表**：分页、排序、多条件搜索（与 `/api/signals` 对接）
 
 ## 项目结构
 
@@ -36,12 +37,13 @@ Spiders/
 ├── web/                  # Web 应用
 │   ├── app.py           # Flask 应用
 │   ├── templates/       # HTML 模板
-│   │   ├── calendar.html  # 时间轴视图
-│   │   └── index.html     # 列表视图
+│   │   ├── calendar.html  # 主界面（时间轴 + 矩阵 + 数据列表）
+│   │   └── index.html     # 列表视图（/list）
+│   ├── static/          # CSS / JS
 │   └── requirements.txt # Python 依赖
 ├── run.py               # 运行脚本
 ├── settings.py          # Scrapy 配置
-└── stock_signals.db     # SQLite 数据库（自动生成）
+└── stock_signals.db     # SQLite（位于仓库根目录，与 `Spiders/` 子目录同级；Web 默认路径见下文）
 ```
 
 ## 安装依赖
@@ -52,8 +54,10 @@ Spiders/
 ### 安装 Scrapy 相关依赖
 
 ```bash
-pip install scrapy scrapy-splash pandas ta sqlite3
+pip install scrapy scrapy-splash pandas ta
 ```
+
+（`sqlite3` 为 Python 标准库模块，无需通过 pip 安装。）
 
 ### 安装 Web 应用依赖
 
@@ -103,8 +107,10 @@ python app.py
 
 ### 3. 查看分析结果
 
-- **时间轴视图**：http://localhost:5001/ （默认）
+- **主界面（时间轴 / 收益矩阵 / 数据列表）**：http://localhost:5001/ （默认）
 - **列表视图**：http://localhost:5001/list
+
+更细的 Web 端说明（筛选项、矩阵含义、CloudBase 上传脚本等）见 **`Spiders/web/README.md`**。
 
 ## 技术指标说明
 
@@ -129,6 +135,9 @@ python app.py
 - `buy_day_change_rate`: 买入当天涨跌幅
 - `next_day_change_rate`: 第二天涨跌幅
 - `overall_success_rate`: 整体成功率
+- `trade_heat_score`: 交易热度评分（部分数据源/报告中有值）
+
+Web 时间轴接口 `GET /api/calendar/events` 会返回上述业务字段（含 `overall_success_rate`），并支持查询参数 `heat_min` / `heat_max` 做服务端热度筛选；时间轴上「筛选后」统计还会叠加前端买入价、买卖日涨跌等条件。
 
 ## 配置说明
 
@@ -141,7 +150,7 @@ python app.py
 ### Web 应用配置
 
 - 默认端口：5001
-- 数据库路径：项目根目录下的 `stock_signals.db`
+- 数据库路径：`Spiders/web/app.py` 从 `web` 目录上溯三级，指向**仓库根目录**下的 `stock_signals.db`（与内含 `Spiders/` 源码子目录同级）。例如克隆在 `.../UGit/Spiders` 时，库文件为 `.../UGit/Spiders/stock_signals.db`
 
 ## 注意事项
 
