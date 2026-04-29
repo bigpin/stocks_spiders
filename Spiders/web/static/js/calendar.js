@@ -608,7 +608,7 @@ function updateCalc() {
             if (d.hitCount > 0 || d.forceSellCount > 0) {
                 const score = d.forceSellEnabled
                     ? (d.avgAllProfit != null ? d.avgAllProfit : -999)
-                    : d.hitRate * d.profitRateAmongHits * (d.avgHitProfit >= 0 ? 1 : -1);
+                    : ((d.avgHitProfit != null ? d.avgHitProfit : -999) * (d.hitRate / 100.0));
                 allScores.push({ score, r, c });
             }
         });
@@ -616,6 +616,7 @@ function updateCalc() {
     allScores.sort((a, b) => b.score - a.score);
     const top10Set    = new Set(allScores.slice(0, 10).map(x => x.r + "_" + x.c));
     const bottom10Set = new Set(allScores.slice(-10).map(x => x.r + "_" + x.c));
+    const topRankMap  = new Map(allScores.slice(0, 10).map((x, idx) => [x.r + "_" + x.c, idx + 1]));
 
     // ── 渲染 ─────────────────────────────────────────────────────────────
     stopLosses.forEach((sl, slIdx) => {
@@ -680,6 +681,13 @@ function updateCalc() {
             cell.style.borderLeft = borderLeft;
             cell.style.fontWeight = fw;
             cell.style.padding = "4px 3px";
+            if (top10Set.has(key)) {
+                cell.classList.add("matrix-top10");
+                const r = topRankMap.get(key);
+                if (r != null) {
+                    cell.setAttribute("data-top-rank", String(r));
+                }
+            }
 
             // ── 格子文本 ─────────────────────────────────────────────────
             if (d.forceSellEnabled) {
