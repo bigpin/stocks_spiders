@@ -199,11 +199,11 @@ SIGNAL_FILTERS = {
     'signal_quality': {
         'min_history_occurrences_exclusive': 7,  # total > 此值；原硬编码 8，先前放宽到 5，现收紧 1 档
         'min_signal_success_rate': 60.0,
-        'min_overall_success_rate': 50.0,
+        'min_overall_success_rate': 60.0,
     },
-    # 写出到 kdj_signals / DB：最近3天至少几种不同 signal_type 才输出（原 >5 即至少 6 种；先前放宽到 3，现收紧 1 档→4）
+    # 写出到 kdj_signals / DB：最近3天至少几种不同 signal_type 才输出
     'signal_output': {
-        'min_distinct_signal_types': 5,
+        'min_distinct_signal_types': 6,
     },
     # 其他过滤
     'exclude_st': True,

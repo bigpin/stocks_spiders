@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git *)",
+      "Bash(gh repo *)",
+      "Bash(gh api *)",
+      "Bash(python __TRACKED_VAR__/scripts/sn_agent_runner.py --help)",
+      "Bash(python *)",
+      "Bash(cp /tmp/openclaw/sn-infographic/20260511_131143/arch_diagram.png /Users/dingli/Documents/Work/DK/430/前期工作/CAD模型云转换服务接口/架构图.png)",
+      "Bash(cp /tmp/openclaw/sn-infographic/20260511_131143/flow_diagram.png /Users/dingli/Documents/Work/DK/430/前期工作/CAD模型云转换服务接口/流程图.png)"
+    ]
+  }
+}
