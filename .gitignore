@@ -33,5 +33,9 @@ debug.html
 stock_list.txt
 com.dingli.spiders.run.plist
 Spiders/web/.env
+Spiders/web/web.pid
 Spiders/web/.cache/wechat_access_token.json
 scripts/cloudbase_lib/.cache
+
+.wolf
+.claude

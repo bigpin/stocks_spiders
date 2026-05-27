@@ -2,6 +2,8 @@ let records = [];
 let selectedGroupId = null;
 let selectedRecord = null;
 let tooltipEl = null;
+let tooltipHideTimer = null;
+let tooltipHovered = false;
 let dateRange = { start: null, end: null };
 let pixelsPerDay = 2;
 let minPixelsPerDay = 0.5;
@@ -38,11 +40,29 @@ function createTooltip() {
     const el = document.createElement("div");
     el.className = "tooltip";
     el.style.display = "none";
+    el.addEventListener("mouseenter", function() {
+        tooltipHovered = true;
+        if (tooltipHideTimer) { clearTimeout(tooltipHideTimer); tooltipHideTimer = null; }
+    });
+    el.addEventListener("mouseleave", function() {
+        tooltipHovered = false;
+        hideTooltipDelayed();
+    });
     document.body.appendChild(el);
+
+    // 鼠标在tooltip区域内时启用pointer-events，允许交互
+    document.addEventListener("mousemove", function(e) {
+        if (!tooltipEl || tooltipEl.style.display === "none") return;
+        const r = tooltipEl.getBoundingClientRect();
+        const inside = e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom;
+        tooltipEl.style.pointerEvents = inside ? "auto" : "none";
+    });
+
     tooltipEl = el;
     return el;
 }
 function showTooltip(html, x, y) {
+    if (tooltipHideTimer) { clearTimeout(tooltipHideTimer); tooltipHideTimer = null; }
     const el = createTooltip();
     el.innerHTML = html;
     el.style.display = "block";
@@ -81,9 +101,17 @@ function showTooltip(html, x, y) {
     el.style.top = top + "px";
 }
 function hideTooltip() {
+    if (tooltipHovered) return;
     if (tooltipEl) {
         tooltipEl.style.display = "none";
     }
+}
+function hideTooltipDelayed() {
+    if (tooltipHideTimer) clearTimeout(tooltipHideTimer);
+    tooltipHideTimer = setTimeout(function() {
+        tooltipHideTimer = null;
+        hideTooltip();
+    }, 200);
 }
 function parseDate(str) {
     if (!str) return null;
@@ -282,7 +310,7 @@ function bindElemEvents(el, rec, kind) {
                 el.style.transform = "";
             }
         }
-        hideTooltip();
+        hideTooltipDelayed();
     });
     el.addEventListener("click", function() {
         if (selectedGroupId === rec.groupId) {
@@ -844,7 +872,7 @@ function updateCalc() {
 
                 showTooltip(html, e.clientX, e.clientY);
             });
-            cell.addEventListener("mouseleave", function() { hideTooltip(); });
+            cell.addEventListener("mouseleave", function() { hideTooltipDelayed(); });
 
             row.appendChild(cell);
         });
@@ -1767,7 +1795,7 @@ async function loadDataList(page = 1) {
                 });
                 
                 signalCountCell.addEventListener('mouseleave', function() {
-                    hideTooltip();
+                    hideTooltipDelayed();
                 });
                 
                 signalCountCell.addEventListener('mousemove', function(e) {

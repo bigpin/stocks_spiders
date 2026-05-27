@@ -853,6 +853,7 @@ select.control-input optgroup {
     font-size: 13px;
     pointer-events: none;
     z-index: 9999;
+    cursor: default;
     box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4), 0 0 0 1px rgba(255, 255, 255, 0.1) inset;
     max-width: 600px;
     line-height: 1.6;
