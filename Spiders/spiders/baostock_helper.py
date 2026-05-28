@@ -7,10 +7,14 @@ baostock 数据获取辅助函数
 
 import os
 import random
+import socket
 import baostock as bs
 import pandas as pd
 from datetime import datetime
 import time
+
+# baostock 单次请求的 socket 超时（秒），防止服务端不响应时无限阻塞
+BAOSTOCK_SOCKET_TIMEOUT = 120
 
 from .stock_config import (
     BAOSTOCK_INTER_REQUEST_JITTER_SEC,
@@ -39,10 +43,14 @@ def _force_relogin_baostock():
     """logout 后重新 login，用于长连接被服务端掐断前的主动换会话。"""
     global _BAOSTOCK_LOGGED_IN
     _BAOSTOCK_LOGGED_IN = False
+    old_timeout = socket.getdefaulttimeout()
+    socket.setdefaulttimeout(BAOSTOCK_SOCKET_TIMEOUT)
     try:
         bs.logout()
     except Exception:
         pass
+    finally:
+        socket.setdefaulttimeout(old_timeout)
     login_baostock()
 
 
@@ -124,11 +132,18 @@ def login_baostock():
     if _BAOSTOCK_LOGGED_IN:
         return True
 
-    lg = bs.login()
-    if lg.error_code != '0':
-        raise Exception(f"baostock登录失败: {lg.error_msg}")
-    _BAOSTOCK_LOGGED_IN = True
-    return True
+    old_timeout = socket.getdefaulttimeout()
+    socket.setdefaulttimeout(BAOSTOCK_SOCKET_TIMEOUT)
+    try:
+        lg = bs.login()
+        if lg.error_code != '0':
+            raise Exception(f"baostock登录失败: {lg.error_msg}")
+        _BAOSTOCK_LOGGED_IN = True
+        return True
+    except socket.timeout:
+        raise Exception("baostock登录超时")
+    finally:
+        socket.setdefaulttimeout(old_timeout)
 
 
 def logout_baostock():
@@ -297,16 +312,30 @@ def fetch_kline_data_baostock(stock_code, start_date=None, end_date=None,
         _maybe_relogin_every_n_kline_requests()
         # 确保已登录（全局只登录一次；上面周期性重登时已登录则此处为 no-op）
         login_baostock()
-        
+
         # 查询K线数据（含估值字段 peTTM/pbMRQ，省去单独的估值抓取阶段）
-        rs = bs.query_history_k_data_plus(
-            bs_code,
-            "date,open,high,low,close,preclose,volume,amount,adjustflag,turn,tradestatus,pctChg,isST,peTTM,pbMRQ",
-            start_date=start_date,
-            end_date=end_date,
-            frequency=frequency,
-            adjustflag=adjustflag
-        )
+        # 设置 socket 超时防止 baostock 服务端不响应时无限阻塞
+        old_timeout = socket.getdefaulttimeout()
+        socket.setdefaulttimeout(BAOSTOCK_SOCKET_TIMEOUT)
+        try:
+            rs = bs.query_history_k_data_plus(
+                bs_code,
+                "date,open,high,low,close,preclose,volume,amount,adjustflag,turn,tradestatus,pctChg,isST,peTTM,pbMRQ",
+                start_date=start_date,
+                end_date=end_date,
+                frequency=frequency,
+                adjustflag=adjustflag
+            )
+        except socket.timeout:
+            # socket 超时，强制重置连接状态，下次调用会重新登录
+            _BAOSTOCK_LOGGED_IN = False
+            try:
+                bs.logout()
+            except Exception:
+                pass
+            raise
+        finally:
+            socket.setdefaulttimeout(old_timeout)
         
         if rs.error_code != '0':
             error_msg = rs.error_msg
@@ -410,10 +439,10 @@ def fetch_kline_data_baostock_simple(stock_code, start_date=None, end_date=None,
 def get_stock_name_baostock(stock_code):
     """
     使用baostock获取股票名称
-    
+
     参数:
         stock_code: 股票代码，如 'sh603288', 'sz000858', '920978'
-    
+
     返回:
         str: 股票名称，如果获取失败返回 None
     """
@@ -421,19 +450,32 @@ def get_stock_name_baostock(stock_code):
         bs_code = convert_stock_code_to_baostock(stock_code)
         # 确保已登录（全局只登录一次）
         login_baostock()
-        
-        rs = bs.query_stock_basic(code=bs_code)
+
+        old_timeout = socket.getdefaulttimeout()
+        socket.setdefaulttimeout(BAOSTOCK_SOCKET_TIMEOUT)
+        try:
+            rs = bs.query_stock_basic(code=bs_code)
+        except socket.timeout:
+            _BAOSTOCK_LOGGED_IN = False
+            try:
+                bs.logout()
+            except Exception:
+                pass
+            return None
+        finally:
+            socket.setdefaulttimeout(old_timeout)
+
         if rs.error_code != '0':
             return None
-        
+
         data_list = []
         while (rs.error_code == '0') & rs.next():
             data_list.append(rs.get_row_data())
-        
+
         if data_list and len(data_list) > 0:
             # baostock返回的字段：code, code_name, ipoDate, outDate, type, status
             return data_list[0][1] if len(data_list[0]) > 1 else None
-        
+
         return None
     except Exception:
         return None

@@ -1,3 +1,6 @@
+// API 基础地址。空字符串 = 本地 Flask；部署时改为云函数 HTTP 触发器地址。
+const API_BASE = "";
+
 let records = [];
 let selectedGroupId = null;
 let selectedRecord = null;
@@ -1240,7 +1243,7 @@ function yToDate(y, ppd) {
 }
 async function loadStats() {
     try {
-        const res = await fetch("/api/stats");
+        const res = await fetch(API_BASE + "/api/stats");
         const data = await res.json();
         document.getElementById("stat-total").textContent = data.total_signals || 0;
         document.getElementById("stat-stocks").textContent = data.total_stocks || 0;
@@ -1323,7 +1326,7 @@ function updateFilteredTimelineStats() {
 }
 async function loadStockCodes() {
     try {
-        const res = await fetch("/api/stock-codes");
+        const res = await fetch(API_BASE + "/api/stock-codes");
         const data = await res.json();
         const select = document.getElementById("filter-stock-code");
         data.stock_codes.forEach(item => {
@@ -1357,7 +1360,7 @@ async function loadDailyPricesForEvents(events) {
                     params.append("insert_date", event.insert_date);
                 }
                 
-                const res = await fetch("/api/signal-daily-prices?" + params.toString());
+                const res = await fetch(API_BASE + "/api/signal-daily-prices?" + params.toString());
                 const data = await res.json();
                 
                 if (data.prices && data.prices.length > 0) {
@@ -1403,7 +1406,7 @@ async function reloadTimeline() {
     // heat 筛选传给后端（NULL 字段不受影响）
     if (heatMin)   params.append("heat_min", heatMin);
     if (heatMax)   params.append("heat_max", heatMax);
-    const res = await fetch("/api/calendar/events?" + params.toString());
+    const res = await fetch(API_BASE + "/api/calendar/events?" + params.toString());
     const data = await res.json();
     const events = data.events || [];
     
@@ -1725,7 +1728,7 @@ async function loadDataList(page = 1) {
     if (dateTo) params.append('date_to', dateTo);
     
     try {
-        const response = await fetch(`/api/signals?${params}`);
+        const response = await fetch(API_BASE + `/api/signals?${params}`);
         const data = await response.json();
         
         loading.style.display = 'none';
@@ -1894,7 +1897,7 @@ function updateDataListSortHeaders() {
 
 async function loadDataListFilterOptions() {
     try {
-        const response = await fetch('/api/filter-options');
+        const response = await fetch(API_BASE + '/api/filter-options');
         const data = await response.json();
         
         // 加载股票代码下拉框（只显示数据库中的）

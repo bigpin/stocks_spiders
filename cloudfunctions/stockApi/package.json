@@ -1,0 +1,9 @@
+{
+  "name": "stockApi",
+  "version": "1.0.0",
+  "description": "股票信号分析系统云函数 API",
+  "main": "index.js",
+  "dependencies": {
+    "wx-server-sdk": "~2.6.3"
+  }
+}

@@ -1,0 +1,19 @@
+{
+  "envId": "cloudbase-4g6zx8vx290da64e",
+  "functionRoot": "./cloudfunctions",
+  "functions": [
+    {
+      "name": "stockApi",
+      "handler": "index.main",
+      "runtime": "Nodejs18.15",
+      "installDependency": true,
+      "triggers": [
+        {
+          "name": "httpTrigger",
+          "type": "http",
+          "config": "GET /api"
+        }
+      ]
+    }
+  ]
+}

@@ -413,6 +413,112 @@ def upload_daily_report_to_cloudbase(report_date=None, log_file=None):
         log(f"[ERROR] 异常详情:\n{error_trace}", also_print=False)
         return False
 
+
+def cleanup_old_daily_prices(days=30, log_file=None):
+    """
+    清理本地 SQLite 中超过 N 天的日线价格数据
+
+    删除 insert_date 超过 days 天的信号关联的 stock_signal_daily_prices 记录。
+    """
+    import sqlite3
+
+    def log(msg, also_print=True):
+        if log_file:
+            log_to_file(log_file, f"[CLEANUP] {msg}", also_print=also_print)
+        elif also_print:
+            print(msg)
+
+    project_root = os.path.dirname(os.path.dirname(__file__))
+    db_path = os.path.join(project_root, 'stock_signals.db')
+
+    if not os.path.exists(db_path):
+        log(f"[WARNING] 数据库不存在: {db_path}，跳过清理")
+        return False
+
+    try:
+        conn = sqlite3.connect(db_path)
+        cursor = conn.cursor()
+
+        # 先统计待删除数量
+        cursor.execute(f"""
+            SELECT COUNT(*) FROM stock_signal_daily_prices
+            WHERE signal_id IN (
+                SELECT id FROM stock_signals WHERE insert_date < date('now', '-{days} days')
+            )
+        """)
+        count = cursor.fetchone()[0]
+
+        if count == 0:
+            log(f"无超过 {days} 天的日线数据需要清理")
+            conn.close()
+            return True
+
+        log(f"清理超过 {days} 天的日线数据，共 {count} 条...")
+
+        cursor.execute(f"""
+            DELETE FROM stock_signal_daily_prices
+            WHERE signal_id IN (
+                SELECT id FROM stock_signals WHERE insert_date < date('now', '-{days} days')
+            )
+        """)
+        deleted = cursor.rowcount
+        conn.commit()
+        conn.close()
+
+        log(f"[OK] 已清理 {deleted} 条过期日线数据")
+        return True
+    except Exception as e:
+        log(f"[ERROR] 清理失败: {e}")
+        return False
+
+
+def sync_sqlite_to_cloud(log_file=None):
+    """
+    同步本地 SQLite 数据库到微信云开发数据库
+    """
+    def log(msg, also_print=True):
+        if log_file:
+            log_to_file(log_file, f"[SYNC] {msg}", also_print=also_print)
+        elif also_print:
+            print(msg)
+
+    project_root = os.path.dirname(os.path.dirname(__file__))
+    sync_script = os.path.join(project_root, 'scripts', 'cloud', 'sync_sqlite_to_cloud.py')
+
+    if not os.path.exists(sync_script):
+        log(f"[WARNING] 同步脚本不存在: {sync_script}，跳过同步", also_print=False)
+        return False
+
+    log(f"开始同步 SQLite 到云数据库...")
+
+    try:
+        result = subprocess.run(
+            [sys.executable, sync_script, '--incremental', '--verbose'],
+            cwd=project_root,
+            capture_output=True,
+            text=True,
+            encoding='utf-8'
+        )
+
+        log(f"同步脚本执行完成，退出码: {result.returncode}")
+
+        if result.stdout:
+            log(f"同步脚本输出:\n{result.stdout}", also_print=False)
+        if result.stderr:
+            log(f"同步脚本错误输出:\n{result.stderr}", also_print=False)
+
+        if result.returncode == 0:
+            log("[OK] SQLite 已同步到云数据库")
+            return True
+        else:
+            log(f"[WARNING] 同步失败 (exit code {result.returncode})", also_print=False)
+            return False
+    except Exception as e:
+        log(f"[ERROR] 同步时发生异常: {e}", also_print=False)
+        import traceback
+        log(f"[ERROR] 异常详情:\n{traceback.format_exc()}", also_print=False)
+        return False
+
 # 股票代码列表
 STOCK_CODES = (
     'sz001280'
@@ -655,6 +761,13 @@ if __name__ == "__main__":
     # 运行获取不带技术指标K线数据的爬虫
     # run_stock_kline_spider_without_indicators()
 
+    # 清理超过30天的日线价格数据
+    log_to_file(log_file, "[STEP 2.5] 清理过期日线数据...")
+    try:
+        cleanup_old_daily_prices(days=30, log_file=log_file)
+    except Exception as e:
+        log_to_file(log_file, f"[STEP 2.5] [WARNING] 清理异常: {e}", also_print=False)
+
     # 爬虫运行完成后，上传信号分析报告到云数据库
     # 使用 try-finally 确保上传逻辑一定会执行
     log_to_file(log_file, f"[STEP 3] 开始上传{date_desc}的信号分析报告到云数据库...")
@@ -673,7 +786,18 @@ if __name__ == "__main__":
             log_to_file(log_file, f"[STEP 3] [WARNING] {date_desc}的信号分析报告上传失败，请检查日志")
         
         log_to_file(log_file, "=" * 80)
-        log_to_file(log_file, "[STEP 4] 所有任务执行完成")
+        log_to_file(log_file, "[STEP 4] 开始同步 SQLite 到云数据库...")
+        try:
+            sync_success = sync_sqlite_to_cloud(log_file=log_file)
+            if sync_success:
+                log_to_file(log_file, f"[STEP 4] [OK] SQLite 同步完成")
+            else:
+                log_to_file(log_file, f"[STEP 4] [WARNING] SQLite 同步失败，请检查日志")
+        except Exception as sync_e:
+            log_to_file(log_file, f"[STEP 4] [ERROR] 同步异常: {sync_e}", also_print=False)
+
+        log_to_file(log_file, "=" * 80)
+        log_to_file(log_file, "[STEP 5] 所有任务执行完成")
     except Exception as e:
         log_to_file(log_file, f"[STEP 3] [ERROR] 上传报告时发生异常: {e}", also_print=False)
         import traceback

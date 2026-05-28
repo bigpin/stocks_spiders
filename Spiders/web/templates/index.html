@@ -405,13 +405,14 @@
     </div>
 
     <script>
+        const API_BASE = "";
         let currentPage = 1;
         let currentSort = 'created_at';
         let currentOrder = 'desc';
 
         async function loadStats() {
             try {
-                const response = await fetch('/api/stats');
+                const response = await fetch(API_BASE + '/api/stats');
                 const data = await response.json();
                 document.getElementById('total-signals').textContent = data.total_signals;
                 document.getElementById('avg-success-rate').textContent = data.avg_success_rate + '%';
@@ -457,7 +458,7 @@
             if (dateTo) params.append('date_to', dateTo);
 
             try {
-                const response = await fetch(`/api/signals?${params}`);
+                const response = await fetch(API_BASE + `/api/signals?${params}`);
                 const data = await response.json();
 
                 loading.style.display = 'none';
