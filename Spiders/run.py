@@ -174,7 +174,7 @@ def _stock_detail_worker_init(script_dir):
 def run_stock_detail_spider(stock_file_path, log_file=None, target_date=None):
     """用 baostock 批量获取全市场估值数据（K线 + PE），写入 stock_detail_data.csv。"""
     import csv as csv_module
-    from concurrent.futures import ProcessPoolExecutor, as_completed
+    from concurrent.futures import ProcessPoolExecutor, wait
 
     def log(msg, also_print=True):
         if log_file:
@@ -248,18 +248,25 @@ def run_stock_detail_spider(stock_file_path, log_file=None, target_date=None):
                 executor.submit(fetch_stock_fundamental_worker, code, target_date): code
                 for code in codes
             }
-            for future in as_completed(futures):
-                try:
-                    result = future.result(timeout=60)
-                    if result:
-                        pending.append(result)
-                        total_ok += 1
-                    else:
+            pending_futures = set(futures.keys())
+            wait_timeout = 120
+            while pending_futures:
+                done_set, pending_futures = wait(pending_futures, timeout=wait_timeout)
+                if not done_set:
+                    log(f"[WARNING] 存在估值任务超时未返回（>{wait_timeout}s），继续等待下一批结果")
+                    continue
+                for future in done_set:
+                    try:
+                        result = future.result(timeout=0)
+                        if result:
+                            pending.append(result)
+                            total_ok += 1
+                        else:
+                            failed += 1
+                    except Exception:
                         failed += 1
-                except Exception:
-                    failed += 1
 
-                done_count += 1
+                    done_count += 1
 
                 # 每积攒 FLUSH_EVERY 条写一次磁盘
                 if len(pending) >= FLUSH_EVERY:
@@ -443,6 +450,45 @@ def log_to_file(log_file, message, also_print=True):
     if also_print:
         print(message)
 
+
+def wait_for_network(log_file=None, timeout=5, check_interval=5, max_checks=120):
+    """
+    唤醒后等网络恢复再继续执行。
+    避免 launchd 定时任务在系统刚醒来时卡在网络请求。
+    """
+    import urllib.request
+    test_urls = [
+        "http://connectivitycheck.platform.hicloud.com/generate_204",
+        "http://captive.apple.com/hotspot-detect.html",
+        "http://www.msftconnecttest.com/connecttest.txt",
+        "https://clients3.google.com/generate_204",
+    ]
+    message = "[STEP 0.9] 网络状态检查：等待网络恢复"
+    if log_file:
+        log_to_file(log_file, message)
+
+    for i in range(1, max_checks + 1):
+        for url in test_urls:
+            try:
+                urllib.request.urlopen(url, timeout=timeout)
+                if log_file:
+                    log_to_file(log_file, "[STEP 0.9] 网络已恢复")
+                return True
+            except Exception:
+                continue
+
+        if log_file:
+            log_to_file(
+                log_file,
+                f"[STEP 0.9] 网络仍未就绪，{check_interval}秒后重试 ({i}/{max_checks})",
+            )
+        time.sleep(check_interval)
+
+    if log_file:
+        log_to_file(log_file, "[STEP 0.9] 等待网络超时，继续尝试执行任务")
+    return False
+
+
 def validate_date(date_str):
     """
     验证日期字符串格式
@@ -474,7 +520,25 @@ def validate_date(date_str):
     except ValueError as e:
         return False, f"日期无效：{e}"
 
+
 if __name__ == "__main__":
+    # 轮转 launchd 外层日志，避免 /tmp/spiders.launchd.test.log 无限增长
+    _launchd_log = "/tmp/spiders.launchd.test.log"
+    _max_bytes = 20 * 1024 * 1024
+    _keep = 3
+    try:
+        if os.path.exists(_launchd_log) and os.path.getsize(_launchd_log) > _max_bytes:
+            for i in range(_keep, 1, -1):
+                src = f"{_launchd_log}.{i-1}"
+                dst = f"{_launchd_log}.{i}"
+                if os.path.exists(src):
+                    os.replace(src, dst)
+            os.replace(_launchd_log, f"{_launchd_log}.1")
+            with open(_launchd_log, "w", encoding="utf-8") as f:
+                f.write("")
+    except Exception:
+        pass
+
     # Scrapy / scrapy.cfg 依赖「当前目录为项目根」；launchd 的 WorkingDirectory 若受限，此处兜底
     _project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     try:
@@ -530,7 +594,10 @@ if __name__ == "__main__":
         print(f"警告: 无法清空日志文件 {log_file}: {e}", file=sys.stderr)
     
     log_to_file(log_file, f"[STEP 1] 日志文件初始化完成，运行模式: {date_desc}的数据 ({target_date})")
-    
+
+    # 先等网络恢复，避免唤醒后长时间卡在网络调用
+    wait_for_network(log_file=log_file, max_checks=60)
+
     # 检查并更新股票列表（一周获取一次）
     log_to_file(log_file, f"[STEP 1.5] 检查股票列表缓存...")
     # stock_list.txt 在项目根目录（run.py 的上一级目录）
@@ -614,3 +681,4 @@ if __name__ == "__main__":
         log_to_file(log_file, f"[STEP 3] [ERROR] 错误详情:\n{error_trace}", also_print=False)
         print(f"[ERROR] 上传报告时发生异常: {e}", file=sys.stderr)
         traceback.print_exc()
+import threading
