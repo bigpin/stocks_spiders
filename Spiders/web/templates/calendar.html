@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>股票信号时间轴视图</title>
-    <link rel="stylesheet" href="css/calendar.css">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/calendar.css') }}">
 </head>
 <body>
     <div class="container">
@@ -555,6 +555,6 @@
             <p style="margin-top: 8px; font-size: 12px; color: #999;">本系统仅供学习和研究使用，不构成任何投资建议。</p>
         </div>
     </div>
-    <script src="js/calendar.js"></script>
+    <script src="{{ url_for('static', filename='js/calendar.js') }}"></script>
 </body>
 </html>

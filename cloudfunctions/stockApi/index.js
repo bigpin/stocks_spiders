@@ -80,18 +80,14 @@ async function handleCalendarEvents(qs) {
     .where(whereObj)
     .orderBy('insert_date', 'desc')
     .limit(500)
-    .field({
-      id: true, stock_code: true, stock_name: true, insert_date: true,
-      insert_price: true, highest_price: true, highest_price_date: true,
-      highest_change_rate: true, highest_days: true,
-      lowest_price: true, lowest_price_date: true,
-      lowest_change_rate: true, lowest_days: true,
-      buy_day_change_rate: true, next_day_change_rate: true,
-      trade_heat_score: true, overall_success_rate: true
-    })
     .get()
 
-  return { events: res.data }
+  // 云数据库返回 _id，前端需要 id
+  const events = res.data.map(doc => {
+    const { _id, ...rest } = doc
+    return { id: _id, ...rest }
+  })
+  return { events }
 }
 
 // ============ Handler: /api/signals ============
@@ -146,8 +142,12 @@ async function handleSignals(qs) {
     .limit(per_page)
     .get()
 
+  const signals = res.data.map(doc => {
+    const { _id, ...rest } = doc
+    return { id: _id, ...rest }
+  })
   return {
-    signals: res.data,
+    signals,
     total,
     page,
     per_page,
@@ -201,26 +201,27 @@ async function handleSignalDailyPrices(qs) {
       .orderBy('days_from_signal', 'asc')
       .limit(100)
       .get()
-    return { prices: res.data }
+    const prices = res.data.map(({ _id, ...rest }) => rest)
+    return { prices }
   }
 
   if (qs.stock_code && qs.insert_date) {
-    // 先查 signal 的 id
+    // 先查 signal 的 _id（同步时用 SQLite id 作为 _id）
     const sigRes = await db.collection('web_signals')
       .where({ stock_code: qs.stock_code, insert_date: qs.insert_date })
-      .field({ id: true })
       .limit(1)
       .get()
 
     if (!sigRes.data.length) return { prices: [] }
-    const signalId = sigRes.data[0].id
+    const signalId = parseInt(sigRes.data[0]._id)
 
     const priceRes = await db.collection('web_daily_prices')
       .where({ signal_id: signalId })
       .orderBy('days_from_signal', 'asc')
       .limit(100)
       .get()
-    return { prices: priceRes.data }
+    const prices = priceRes.data.map(({ _id, ...rest }) => rest)
+    return { prices }
   }
 
   return { error: '需要提供 signal_id 或 (stock_code + insert_date)' }
@@ -229,7 +230,7 @@ async function handleSignalDailyPrices(qs) {
 // ============ Router ============
 exports.main = async (event, context) => {
   const path = (event.$url && event.$url.path) || event.path || ''
-  const qs = (event.$url && event.$url.queryStringObject) || event.queryStringObject || {}
+  const qs = (event.$url && event.$url.queryStringObject) || event.queryStringObject || event.queryStringParameters || {}
 
   try {
     let result
