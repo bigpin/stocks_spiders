@@ -38,20 +38,19 @@ async function handleStats() {
 
 // ============ Handler: /api/stock-codes ============
 async function handleStockCodes() {
-  const res = await db.collection('web_signals')
-    .field({ stock_code: true, stock_name: true })
-    .limit(1000)
-    .get()
+  const aggRes = await db.collection('web_signals')
+    .aggregate()
+    .group({
+      _id: '$stock_code',
+      name: aggr.first('$stock_name')
+    })
+    .sort({ _id: 1 })
+    .end()
 
-  const seen = new Set()
-  const stock_codes = []
-  for (const doc of res.data) {
-    if (doc.stock_code && !seen.has(doc.stock_code)) {
-      seen.add(doc.stock_code)
-      stock_codes.push({ code: doc.stock_code, name: doc.stock_name || '' })
-    }
-  }
-  stock_codes.sort((a, b) => a.code.localeCompare(b.code))
+  const stock_codes = aggRes.list.map(doc => ({
+    code: doc._id,
+    name: doc.name || ''
+  }))
   return { stock_codes }
 }
 
@@ -167,40 +166,34 @@ async function handleSignals(qs) {
 
 // ============ Handler: /api/filter-options ============
 async function handleFilterOptions() {
-  const res = await db.collection('web_signals')
-    .field({ stock_code: true, stock_name: true, signal: true })
-    .limit(1000)
-    .get()
+  const [codesRes, namesRes, signalsRes] = await Promise.all([
+    db.collection('web_signals').aggregate()
+      .group({ _id: '$stock_code', name: aggr.first('$stock_name') })
+      .sort({ _id: 1 })
+      .end(),
+    db.collection('web_signals').aggregate()
+      .group({ _id: '$stock_name' })
+      .match({ _id: aggr.neq(null) })
+      .sort({ _id: 1 })
+      .end(),
+    db.collection('web_signals').aggregate()
+      .match({ signal: aggr.neq(null) })
+      .project({ signals: { $split: ['$signal', ','] } })
+      .unwind('$signals')
+      .group({ _id: { $trim: { input: '$signals' } } })
+      .match({ _id: aggr.neq('') })
+      .sort({ _id: 1 })
+      .end()
+  ])
 
-  const codeSeen = new Set()
-  const nameSeen = new Set()
-  const signalTypes = new Set()
-  const stock_codes = []
-  const stock_names = []
+  const stock_codes = codesRes.list.map(doc => ({
+    code: doc._id,
+    name: doc.name || ''
+  }))
+  const stock_names = namesRes.list.map(doc => doc._id)
+  const signal_types = signalsRes.list.map(doc => doc._id)
 
-  for (const doc of res.data) {
-    if (doc.stock_code && !codeSeen.has(doc.stock_code)) {
-      codeSeen.add(doc.stock_code)
-      stock_codes.push({ code: doc.stock_code, name: doc.stock_name || '' })
-    }
-    if (doc.stock_name && !nameSeen.has(doc.stock_name)) {
-      nameSeen.add(doc.stock_name)
-      stock_names.push(doc.stock_name)
-    }
-    if (doc.signal) {
-      const signals = doc.signal.split(',').map(s => s.trim()).filter(Boolean)
-      signals.forEach(s => signalTypes.add(s))
-    }
-  }
-
-  stock_codes.sort((a, b) => a.code.localeCompare(b.code))
-  stock_names.sort()
-
-  return {
-    stock_codes,
-    stock_names,
-    signal_types: [...signalTypes].sort()
-  }
+  return { stock_codes, stock_names, signal_types }
 }
 
 // ============ Handler: /api/signal-daily-prices ============

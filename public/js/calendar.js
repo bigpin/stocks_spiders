@@ -917,157 +917,140 @@ function renderTimeMarkers() {
     markers.forEach(m => m.remove());
     if (!dateRange.start || !dateRange.end) return;
     const dayMs = 24 * 60 * 60 * 1000;
-    let currentDate = new Date(dateRange.start);
-    currentDate.setHours(0, 0, 0, 0);
-    const endDate = new Date(dateRange.end);
-    endDate.setHours(23, 59, 59, 999);
-    let lastLabelY = -Infinity;
-    let lastMonth = -1;
-    
-    // 计算总天数和总高度
+    const axis = document.getElementById("timeline-axis");
     const totalDays = getDaysBetween(dateRange.start, dateRange.end);
     const totalHeight = totalDays * pixelsPerDay;
-    
-    // 根据缩放级别和总高度动态调整标注密度
-    // 目标：确保在整个时间轴上显示足够多的日期标签
+
+    // 虚拟滚动：只渲染可见范围内的标记（前后各留60天缓冲）
+    const bufferDays = 60;
+    const viewTop = axis ? axis.scrollTop : 0;
+    const viewHeight = axis ? axis.clientHeight : 600;
+    const visStartDay = Math.max(0, totalDays - (viewTop + viewHeight) / pixelsPerDay - bufferDays);
+    const visEndDay = Math.min(totalDays, totalDays - viewTop / pixelsPerDay + bufferDays);
+
+    const startMs = dateRange.start.getTime();
+    const startDate = new Date(startMs + visStartDay * dayMs);
+    startDate.setHours(0, 0, 0, 0);
+    const endDate = new Date(startMs + visEndDay * dayMs);
+    endDate.setHours(23, 59, 59, 999);
+
     let minLabelSpacing;
     let showWeekly;
     let showDaily;
-    
+
     if (pixelsPerDay >= 5) {
-        // 缩放很大：显示每日
         minLabelSpacing = Math.max(20, pixelsPerDay * 0.8);
         showWeekly = true;
         showDaily = true;
     } else if (pixelsPerDay >= 2) {
-        // 缩放较大：显示每周和重要日期
         minLabelSpacing = Math.max(30, pixelsPerDay * 1.5);
         showWeekly = true;
         showDaily = false;
     } else if (pixelsPerDay >= 0.5) {
-        // 缩放中等：显示每周
         minLabelSpacing = Math.max(40, pixelsPerDay * 2);
         showWeekly = true;
         showDaily = false;
     } else {
-        // 缩放很小：至少显示每月和一些重要日期
-        // 根据总高度计算合适的间距，确保至少显示10-15个标签
         const targetLabels = Math.min(15, Math.max(10, Math.floor(totalHeight / 60)));
         minLabelSpacing = totalHeight / targetLabels;
         showWeekly = pixelsPerDay >= 0.3;
         showDaily = false;
     }
-    
+
+    // 初始化 lastLabelY：找到可见范围之前最近的标签位置
+    let lastLabelY = -Infinity;
+    let currentDate = new Date(dateRange.start);
+    currentDate.setHours(0, 0, 0, 0);
+    while (currentDate < startDate) {
+        const d = currentDate.getDate();
+        if (d === 1) {
+            lastLabelY = dateToY(currentDate);
+        }
+        currentDate = new Date(currentDate.getTime() + dayMs);
+    }
+
     while (currentDate <= endDate) {
         const y = dateToY(currentDate);
-        const isWeekStart = currentDate.getDay() === 1; // 周一
-        const currentMonth = currentDate.getMonth();
-        const isNewMonth = currentMonth !== lastMonth;
-        
-        // 更新月份记录
-        if (isNewMonth) {
-            lastMonth = currentMonth;
-        }
-        
+        const isWeekStart = currentDate.getDay() === 1;
         const dayOfMonth = currentDate.getDate();
         const isFirstDay = dayOfMonth === 1;
-        
-        // 每月1日：必须显示，线条更明显
+
         if (isFirstDay) {
             const marker = document.createElement("div");
             marker.className = "time-marker first-day-marker";
             marker.style.top = y + "px";
-            
             const label = document.createElement("div");
             label.className = "time-label week-label";
             label.textContent = formatDateShort(currentDate);
             marker.appendChild(label);
-            
             content.appendChild(marker);
             lastLabelY = y;
         }
-        // 日标记：缩放很大时显示每日
         else if (showDaily && (y - lastLabelY >= minLabelSpacing * 0.6)) {
             const marker = document.createElement("div");
             marker.className = "time-marker";
             marker.style.top = y + "px";
-            
             const label = document.createElement("div");
             label.className = "time-label";
             label.textContent = formatDateShort(currentDate);
             marker.appendChild(label);
-            
             content.appendChild(marker);
             lastLabelY = y;
         }
-        // 周标记：显示周一
         else if (showWeekly && isWeekStart && (y - lastLabelY >= minLabelSpacing * 0.6)) {
             const marker = document.createElement("div");
             marker.className = "time-marker week-marker";
             marker.style.top = y + "px";
-            
             const label = document.createElement("div");
             label.className = "time-label week-label";
             label.textContent = formatDateShort(currentDate);
             marker.appendChild(label);
-            
             content.appendChild(marker);
             lastLabelY = y;
         }
-        // 其他日期：根据缩放级别显示不同密度的日期
         else {
             let shouldShow = false;
-            
-            // 计算实际需要的间距（考虑标签高度）
             const actualSpacing = Math.abs(y - lastLabelY);
-            const minSpacing = Math.max(30, pixelsPerDay * 2); // 最小间距，确保标签不重叠
-            
+            const minSpacing = Math.max(30, pixelsPerDay * 2);
+
             if (showWeekly) {
-                // 缩放较大时：显示每3天、每5天或每10天
                 if (dayOfMonth % 3 === 0 || dayOfMonth % 5 === 0 || dayOfMonth % 10 === 0) {
                     shouldShow = (actualSpacing >= minSpacing * 0.3);
                 }
             } else if (pixelsPerDay >= 0.3) {
-                // 缩放中等时：显示每5天、每10天或15号
                 if (dayOfMonth === 15 || dayOfMonth % 5 === 0 || dayOfMonth % 10 === 0) {
                     shouldShow = (actualSpacing >= minSpacing * 0.4);
                 }
             } else {
-                // 缩放很小时：显示每10天或15号，间距更宽松
                 if (dayOfMonth === 15 || dayOfMonth % 10 === 0) {
                     shouldShow = (actualSpacing >= minSpacing * 0.5);
                 }
             }
-            
-            // 如果间距足够大，即使不满足上述条件，也显示一些日期（每7天）
+
             if (!shouldShow && actualSpacing >= minSpacing * 0.6) {
                 if (dayOfMonth % 7 === 0) {
                     shouldShow = true;
                 }
             }
-            
-            // 如果距离上次标签已经很远，强制显示一些日期（每10天）
+
             if (!shouldShow && actualSpacing >= minSpacing * 1.2) {
                 if (dayOfMonth % 10 === 0 || dayOfMonth === 15) {
                     shouldShow = true;
                 }
             }
-            
+
             if (shouldShow) {
                 const marker = document.createElement("div");
                 marker.className = "time-marker week-marker";
                 marker.style.top = y + "px";
-                
                 const label = document.createElement("div");
                 label.className = "time-label week-label";
                 label.textContent = formatDateShort(currentDate);
                 marker.appendChild(label);
-                
                 content.appendChild(marker);
                 lastLabelY = y;
             }
-            
-            // 普通日期线：总是显示，但不一定有标签（1日已经在上面处理过了，这里不再创建）
+
             if (!isFirstDay) {
                 const marker = document.createElement("div");
                 marker.className = "time-marker";
@@ -1075,7 +1058,7 @@ function renderTimeMarkers() {
                 content.appendChild(marker);
             }
         }
-        
+
         currentDate = new Date(currentDate.getTime() + dayMs);
     }
 }
@@ -1258,6 +1241,9 @@ function setupZoom() {
             }
         }
     });
+    // 滚动时重新渲染时间标记（虚拟滚动）
+    const debouncedRenderMarkers = debounce(renderTimeMarkers, 100);
+    axis.addEventListener("scroll", debouncedRenderMarkers);
 }
 function yToDate(y, ppd) {
     if (!dateRange.start || !dateRange.end) return null;
