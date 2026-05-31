@@ -76,18 +76,28 @@ async function handleCalendarEvents(qs) {
     whereObj.trade_heat_score = _.lte(parseFloat(qs.heat_max))
   }
 
+  const page = parseInt(qs.page) || 1
+  const perPage = parseInt(qs.per_page) || 200
+  const skip = (page - 1) * perPage
+
+  const countRes = await db.collection('web_signals').where(whereObj).count()
+  const total = countRes.total
+
   const res = await db.collection('web_signals')
     .where(whereObj)
     .orderBy('insert_date', 'desc')
-    .limit(500)
+    .skip(skip)
+    .limit(perPage)
     .get()
 
-  // 云数据库返回 _id，前端需要 id
   const events = res.data.map(doc => {
     const { _id, ...rest } = doc
     return { id: _id, ...rest }
   })
-  return { events }
+  return {
+    events, total, page, per_page: perPage,
+    total_pages: Math.ceil(total / perPage),
+  }
 }
 
 // ============ Handler: /api/signals ============

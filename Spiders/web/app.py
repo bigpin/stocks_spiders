@@ -170,57 +170,58 @@ def get_calendar_events():
     date_to = request.args.get('date_to', '')
     heat_min = request.args.get('heat_min', '')
     heat_max = request.args.get('heat_max', '')
-    query = """
+    page = int(request.args.get('page', 1))
+    per_page = int(request.args.get('per_page', 200))
+
+    where = "WHERE 1=1"
+    params = []
+    if stock_code:
+        where += " AND stock_code LIKE ?"
+        params.append(f"%{stock_code}%")
+    if date_from:
+        where += " AND date(insert_date) >= date(?)"
+        params.append(date_from)
+    if date_to:
+        where += " AND date(insert_date) <= date(?)"
+        params.append(date_to)
+    if heat_min:
+        where += " AND trade_heat_score >= ?"
+        params.append(float(heat_min))
+    if heat_max:
+        where += " AND trade_heat_score <= ?"
+        params.append(float(heat_max))
+
+    cursor.execute(f"SELECT COUNT(*) FROM stock_signals {where}", params)
+    total = cursor.fetchone()[0]
+
+    query = f"""
         SELECT id, stock_code, stock_name, insert_date, insert_price,
                highest_price, highest_price_date, highest_change_rate, highest_days,
                lowest_price, lowest_price_date, lowest_change_rate, lowest_days,
                buy_day_change_rate, next_day_change_rate, trade_heat_score,
                overall_success_rate
-        FROM stock_signals
-        WHERE 1=1
+        FROM stock_signals {where}
+        ORDER BY insert_date DESC
+        LIMIT ? OFFSET ?
     """
-    params = []
-    if stock_code:
-        query += " AND stock_code LIKE ?"
-        params.append(f"%{stock_code}%")
-    if date_from:
-        query += " AND date(insert_date) >= date(?)"
-        params.append(date_from)
-    if date_to:
-        query += " AND date(insert_date) <= date(?)"
-        params.append(date_to)
-    if heat_min:
-        query += " AND trade_heat_score >= ?"
-        params.append(float(heat_min))
-    if heat_max:
-        query += " AND trade_heat_score <= ?"
-        params.append(float(heat_max))
-    query += " ORDER BY insert_date DESC"
+    params.extend([per_page, (page - 1) * per_page])
     cursor.execute(query, params)
     rows = cursor.fetchall()
-    events = []
-    for row in rows:
-        events.append({
-            'id': row[0],
-            'stock_code': row[1],
-            'stock_name': row[2],
-            'insert_date': row[3],
-            'insert_price': row[4],
-            'highest_price': row[5],
-            'highest_price_date': row[6],
-            'highest_change_rate': row[7],
-            'highest_days': row[8],
-            'lowest_price': row[9],
-            'lowest_price_date': row[10],
-            'lowest_change_rate': row[11],
-            'lowest_days': row[12],
-            'buy_day_change_rate': row[13] if len(row) > 13 else None,
-            'next_day_change_rate': row[14] if len(row) > 14 else None,
-            'trade_heat_score': row[15] if len(row) > 15 else None,
-            'overall_success_rate': row[16] if len(row) > 16 else None,
-        })
+    events = [{
+        'id': row[0], 'stock_code': row[1], 'stock_name': row[2],
+        'insert_date': row[3], 'insert_price': row[4],
+        'highest_price': row[5], 'highest_price_date': row[6],
+        'highest_change_rate': row[7], 'highest_days': row[8],
+        'lowest_price': row[9], 'lowest_price_date': row[10],
+        'lowest_change_rate': row[11], 'lowest_days': row[12],
+        'buy_day_change_rate': row[13], 'next_day_change_rate': row[14],
+        'trade_heat_score': row[15], 'overall_success_rate': row[16],
+    } for row in rows]
     conn.close()
-    return jsonify({'events': events})
+    return jsonify({
+        'events': events, 'total': total, 'page': page,
+        'per_page': per_page, 'total_pages': (total + per_page - 1) // per_page,
+    })
 
 @app.route('/api/stock-codes')
 def get_stock_codes():

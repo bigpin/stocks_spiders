@@ -11,6 +11,10 @@ function debounce(fn, delay) {
 const debouncedReloadTimeline = debounce(reloadTimeline, 300);
 const debouncedUpdateCalc = debounce(updateCalc, 300);
 
+let timelinePage = 1;
+let timelineTotalPages = 1;
+let allTimelineEvents = [];
+
 let records = [];
 let selectedGroupId = null;
 let selectedRecord = null;
@@ -571,6 +575,18 @@ function updateCalc() {
     const forceSellDays    = parseInt(document.getElementById("filter-force-sell-days").value) || 30;
     const calcOptions      = { forceSell: forceSellEnabled, forceSellDays };
 
+    // ── 预计算所有记录的止盈止损结果，避免 225×N 重复计算 ──────────────
+    const precomputed = filteredRecords.map(rec => {
+        if (!rec.buyPrice) return null;
+        const map = {};
+        stopLosses.forEach(sl => {
+            profitTargets.forEach(pt => {
+                map[sl + "_" + pt] = calculateProfitForStock(rec, pt, sl, calcOptions);
+            });
+        });
+        return { rec, map };
+    });
+
     // ── 构建每格统计 ─────────────────────────────────────────────────────
     const cellData = [];
 
@@ -580,15 +596,17 @@ function updateCalc() {
             let profitCount = 0, lossCount = 0, missCount = 0, forceSellCount = 0, ambigCount = 0;
             let totalProfitDays = 0, totalLossDays = 0;
             let totalForceSellProfit = 0, totalForceSellDays = 0;
-            const hitStocks       = [];   // 触发止盈/止损的个股
-            const forceSellStocks = [];   // 强制卖出的个股
-            const missStocks      = [];   // 未触发（强制卖出关闭时）
+            const hitStocks       = [];
+            const forceSellStocks = [];
+            const missStocks      = [];
 
-            filteredRecords.forEach(rec => {
-                if (!rec.buyPrice) return;
-                const result = calculateProfitForStock(rec, pt, sl, calcOptions);
-                if (result === null) return;
-
+            const key = sl + "_" + pt;
+            for (let i = 0; i < precomputed.length; i++) {
+                const entry = precomputed[i];
+                if (!entry) continue;
+                const result = entry.map[key];
+                if (!result) continue;
+                const rec = entry.rec;
                 const isLoss = result.type === "loss" || result.type === "loss_ambiguous";
 
                 if (result.type === "profit") {
@@ -612,7 +630,7 @@ function updateCalc() {
                     missCount++;
                     missStocks.push({ code: rec.stockCode || "-", name: rec.stockName || "-" });
                 }
-            });
+            }
 
             const hitCount = profitCount + lossCount;
             // 触达率 = 止盈+止损 / 总信号（不含强制卖出）
@@ -1379,25 +1397,46 @@ async function loadDailyPricesForEvents(events) {
     });
 }
 async function reloadTimeline() {
+    timelinePage = 1;
+    allTimelineEvents = [];
+    await loadTimelinePage(1);
+}
+
+async function loadMoreTimeline() {
+    await loadTimelinePage(timelinePage + 1);
+}
+
+async function loadTimelinePage(page) {
     const stockCode = document.getElementById("filter-stock-code").value;
     const dateFrom  = document.getElementById("filter-date-from").value;
     const dateTo    = document.getElementById("filter-date-to").value;
     const heatMin   = document.getElementById("filter-timeline-heat-min").value;
     const heatMax   = document.getElementById("filter-timeline-heat-max").value;
-    const params = new URLSearchParams();
+    const params = new URLSearchParams({ page, per_page: 200 });
     if (stockCode) params.append("stock_code", stockCode);
     if (dateFrom)  params.append("date_from", dateFrom);
     if (dateTo)    params.append("date_to", dateTo);
-    // heat 筛选传给后端（NULL 字段不受影响）
     if (heatMin)   params.append("heat_min", heatMin);
     if (heatMax)   params.append("heat_max", heatMax);
     const res = await fetch(API_BASE + "/api/calendar/events?" + params.toString());
     const data = await res.json();
     const events = data.events || [];
-    
-    // 批量加载每日价格数据
+
+    timelinePage = data.page || page;
+    timelineTotalPages = data.total_pages || 1;
+
+    // 为新事件加载价格数据
     await loadDailyPricesForEvents(events);
-    
+    allTimelineEvents = allTimelineEvents.concat(events);
+
+    // 更新"加载更多"按钮
+    const loadMoreBtn = document.getElementById("load-more-btn");
+    if (loadMoreBtn) {
+        loadMoreBtn.style.display = timelinePage < timelineTotalPages ? "block" : "none";
+        loadMoreBtn.textContent = "加载更多（第 " + (timelinePage + 1) + " / " + timelineTotalPages + " 页）";
+    }
+
+    const eventsToUse = allTimelineEvents;
     records = [];
     const priceMinInput = document.getElementById("filter-timeline-price-min").value;
     const priceMaxInput = document.getElementById("filter-timeline-price-max").value;
@@ -1411,7 +1450,7 @@ async function reloadTimeline() {
     const buyDayChangeMax = buyDayChangeMaxInput ? parseFloat(buyDayChangeMaxInput) : Infinity;
     const nextDayChangeMin = nextDayChangeMinInput ? parseFloat(nextDayChangeMinInput) : -Infinity;
     const nextDayChangeMax = nextDayChangeMaxInput ? parseFloat(nextDayChangeMaxInput) : Infinity;
-    events.forEach((e, idx) => {
+    eventsToUse.forEach((e, idx) => {
         const buyPrice = e.insert_price != null ? Number(e.insert_price) : null;
         if (priceMinInput && (buyPrice === null || buyPrice < priceMin)) return;
         if (priceMaxInput && (buyPrice === null || buyPrice > priceMax)) return;
