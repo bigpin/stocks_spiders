@@ -21,6 +21,8 @@ let selectedRecord = null;
 let tooltipEl = null;
 let tooltipHideTimer = null;
 let tooltipHovered = false;
+const tooltipMap = new Map();
+let currentAbortController = null;
 let dateRange = { start: null, end: null };
 let pixelsPerDay = 2;
 let minPixelsPerDay = 0.5;
@@ -77,6 +79,28 @@ function createTooltip() {
 
     tooltipEl = el;
     return el;
+}
+
+let loadingOverlay = null;
+function showLoading(msg) {
+    if (!loadingOverlay) {
+        loadingOverlay = document.createElement("div");
+        loadingOverlay.id = "loading-overlay";
+        loadingOverlay.style.cssText = "position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(255,255,255,0.7);display:flex;align-items:center;justify-content:center;z-index:9999;pointer-events:none;";
+        const spinner = document.createElement("div");
+        spinner.style.cssText = "text-align:center;color:#1565c0;font-size:14px;";
+        spinner.innerHTML = '<div style="width:36px;height:36px;border:3px solid #e3e3e3;border-top-color:#1565c0;border-radius:50%;animation:spin 0.8s linear infinite;margin:0 auto 10px;"></div><div id="loading-msg"></div>';
+        loadingOverlay.appendChild(spinner);
+        document.body.appendChild(loadingOverlay);
+        const style = document.createElement("style");
+        style.textContent = "@keyframes spin{to{transform:rotate(360deg)}}";
+        document.head.appendChild(style);
+    }
+    document.getElementById("loading-msg").textContent = msg || "加载中...";
+    loadingOverlay.style.display = "flex";
+}
+function hideLoading() {
+    if (loadingOverlay) loadingOverlay.style.display = "none";
 }
 function showTooltip(html, x, y) {
     if (tooltipHideTimer) { clearTimeout(tooltipHideTimer); tooltipHideTimer = null; }
@@ -290,6 +314,58 @@ function buildTooltip(rec, kind) {
     }
     return html;
 }
+const stockElemMap = new WeakMap();
+let hoveredStockElem = null;
+let delegatedStockEventsSetup = false;
+
+function setupDelegatedStockEvents() {
+    if (delegatedStockEventsSetup) return;
+    delegatedStockEventsSetup = true;
+    const content = document.getElementById("timeline-content");
+
+    content.addEventListener("mouseover", function(e) {
+        const el = e.target.closest(".stock-elem");
+        if (!el) return;
+        const entry = stockElemMap.get(el);
+        if (!entry) return;
+        if (hoveredStockElem === el) return;
+        if (hoveredStockElem) {
+            const prev = hoveredStockElem;
+            prev.style.transform = prev.classList.contains("stock-point") ? "translate(-50%, -50%)" : "";
+        }
+        hoveredStockElem = el;
+        if (!selectedGroupId) {
+            if (el.classList.contains("stock-point")) {
+                el.style.transform = "translate(-50%, -50%) scale(1.5)";
+            } else {
+                el.style.transform = "scaleX(1.5)";
+            }
+        }
+        showTooltip(buildTooltip(entry.rec, entry.kind), e.clientX, e.clientY);
+    });
+
+    content.addEventListener("mouseout", function(e) {
+        const el = e.target.closest(".stock-elem");
+        if (!el) return;
+        const related = e.relatedTarget ? e.relatedTarget.closest(".stock-elem") : null;
+        if (related === el) return;
+        if (hoveredStockElem === el) {
+            el.style.transform = el.classList.contains("stock-point") ? "translate(-50%, -50%)" : "";
+            hoveredStockElem = null;
+        }
+        hideTooltipDelayed();
+    });
+
+    content.addEventListener("click", function(e) {
+        const el = e.target.closest(".stock-elem");
+        if (!el) return;
+        const entry = stockElemMap.get(el);
+        if (!entry) return;
+        selectedGroupId = selectedGroupId === entry.rec.groupId ? null : entry.rec.groupId;
+        renderTimeline();
+    });
+}
+
 function highlightGroup(groupId) {
     const elems = document.querySelectorAll(".stock-elem");
     elems.forEach(el => {
@@ -302,40 +378,6 @@ function highlightGroup(groupId) {
         } else {
             el.style.opacity = "1";
         }
-    });
-}
-function bindElemEvents(el, rec, kind) {
-    const isPoint = el.classList.contains("stock-point");
-    el.addEventListener("mouseenter", function(evt) {
-        if (!selectedGroupId) {
-            el.style.opacity = "1";
-            if (isPoint) {
-                el.style.transform = "translate(-50%, -50%) scale(1.5)";
-            } else {
-                el.style.transform = "scaleX(1.5)";
-            }
-        }
-        const html = buildTooltip(rec, kind);
-        showTooltip(html, evt.clientX, evt.clientY);
-    });
-    el.addEventListener("mouseleave", function() {
-        if (!selectedGroupId) {
-            el.style.opacity = "";
-            if (isPoint) {
-                el.style.transform = "translate(-50%, -50%)";
-            } else {
-                el.style.transform = "";
-            }
-        }
-        hideTooltipDelayed();
-    });
-    el.addEventListener("click", function() {
-        if (selectedGroupId === rec.groupId) {
-            selectedGroupId = null;
-        } else {
-            selectedGroupId = rec.groupId;
-        }
-        renderTimeline();
     });
 }
 // options: { forceSell: bool, forceSellDays: number }
@@ -539,6 +581,7 @@ function resetCalcFilters() {
     updateCalc();
 }
 function updateCalc() {
+    tooltipMap.clear();
     const reachRateInput = document.getElementById("filter-reach-rate");
     const minReachRate = reachRateInput && reachRateInput.value !== ""
         ? Math.max(0, Math.min(100, parseFloat(reachRateInput.value)))
@@ -810,7 +853,8 @@ function updateCalc() {
             }
 
             // ── Tooltip ──────────────────────────────────────────────────
-            const tooltipData = {
+            const tooltipKey = slIdx + "_" + ptIdx;
+            tooltipMap.set(tooltipKey, {
                 pt, sl, totalStocks, forceSellEnabled: d.forceSellEnabled,
                 hitCount: d.hitCount, profitCount: d.profitCount, lossCount: d.lossCount,
                 missCount: d.missCount, forceSellCount: d.forceSellCount, ambigCount: d.ambigCount,
@@ -820,11 +864,11 @@ function updateCalc() {
                 avgProfitDays: d.avgProfitDays, avgLossDays: d.avgLossDays,
                 avgForceSellP: d.avgForceSellP, avgForceSellD: d.avgForceSellD,
                 hitStocks: d.hitStocks, forceSellStocks: d.forceSellStocks, missStocks: d.missStocks,
-            };
-            cell.dataset.tooltip = JSON.stringify(tooltipData);
+            });
+            cell.dataset.tooltipKey = tooltipKey;
 
             cell.addEventListener("mouseenter", function(e) {
-                const td = JSON.parse(this.dataset.tooltip || "{}");
+                const td = tooltipMap.get(this.dataset.tooltipKey) || {};
                 let html = '<div class="tooltip-title">止盈 +' + td.pt + '% / 止损 ' + td.sl + '%</div>';
 
                 html += '<div style="padding:6px 0;border-bottom:1px solid #eee;margin-bottom:6px;">';
@@ -925,6 +969,7 @@ function renderTimeMarkers() {
     const bufferDays = 60;
     const viewTop = axis ? axis.scrollTop : 0;
     const viewHeight = axis ? axis.clientHeight : 600;
+    // 反转时间轴：scrollTop=0 → newest(top) → y=0; scrollTop=totalHeight → oldest(bottom)
     const visStartDay = Math.max(0, totalDays - (viewTop + viewHeight) / pixelsPerDay - bufferDays);
     const visEndDay = Math.min(totalDays, totalDays - viewTop / pixelsPerDay + bufferDays);
 
@@ -1105,12 +1150,28 @@ function renderStockLines() {
     lines.forEach(l => l.remove());
     const points = content.querySelectorAll(".stock-point");
     points.forEach(p => p.remove());
-    const visibleRecords = records.filter(rec => !selectedGroupId || rec.groupId === selectedGroupId);
+    const filteredRecords = records.filter(rec => !selectedGroupId || rec.groupId === selectedGroupId);
+
+    // 虚拟滚动：只渲染可见范围内的股票线
+    const axis = document.getElementById("timeline-axis");
+    const buffer = 200;
+    const viewTop = axis ? axis.scrollTop - buffer : 0;
+    const viewBottom = axis ? axis.scrollTop + axis.clientHeight + buffer : 99999;
+
+    function isInViewport(rec) {
+        const dates = [rec.buyDate, rec.highDate, rec.lowDate].filter(Boolean);
+        if (!dates.length) return false;
+        for (const d of dates) {
+            const y = dateToY(d);
+            if (y >= viewTop && y <= viewBottom) return true;
+        }
+        return false;
+    }
+    const visibleRecords = filteredRecords.filter(isInViewport);
+
     const screenWidth = window.innerWidth || 1400;
-    // Adjust width for sidebar
-    const sidebarWidth = 320 + 20; // 320px + 20px gap
+    const sidebarWidth = 320 + 20;
     const availableScreenWidth = document.querySelector('.main-content').offsetWidth || (screenWidth - sidebarWidth);
-    
     const startX = 80;
     const endX = availableScreenWidth - 40;
     const availableWidth = endX - startX;
@@ -1143,7 +1204,7 @@ function renderStockLines() {
                     line.style.height = height + "px";
                     line.style.backgroundColor = colorForChange(rec.highChange, true);
                     content.appendChild(line);
-                    bindElemEvents(line, rec, "high");
+                    stockElemMap.set(line, {rec, kind: "high"});
                 }
                 if (rec.highDate) {
                     const highY2 = dateToY(rec.highDate);
@@ -1153,7 +1214,7 @@ function renderStockLines() {
                     highPoint.style.left = (highLineX + lineWidth / 2) + "px";
                     highPoint.style.top = highY2 + "px";
                     content.appendChild(highPoint);
-                    bindElemEvents(highPoint, rec, "high");
+                    stockElemMap.set(highPoint, {rec, kind: "high"});
                 }
             }
             if (rec.buyDate && rec.lowDate && showLow) {
@@ -1171,7 +1232,7 @@ function renderStockLines() {
                     line.style.height = height + "px";
                     line.style.backgroundColor = colorForChange(rec.lowChange, false);
                     content.appendChild(line);
-                    bindElemEvents(line, rec, "low");
+                    stockElemMap.set(line, {rec, kind: "low"});
                 }
                 if (rec.lowDate) {
                     const lowY2 = dateToY(rec.lowDate);
@@ -1181,7 +1242,7 @@ function renderStockLines() {
                     lowPoint.style.left = (lowLineX + lineWidth / 2) + "px";
                     lowPoint.style.top = lowY2 + "px";
                     content.appendChild(lowPoint);
-                    bindElemEvents(lowPoint, rec, "low");
+                    stockElemMap.set(lowPoint, {rec, kind: "low"});
                 }
             }
             if (showBuy && rec.buyDate) {
@@ -1202,7 +1263,7 @@ function renderStockLines() {
                     buyPoint.style.background = 'linear-gradient(135deg, #757575 0%, #616161 100%)';
                 }
                 content.appendChild(buyPoint);
-                bindElemEvents(buyPoint, rec, "buy");
+                stockElemMap.set(buyPoint, {rec, kind: "buy"});
             }
         });
     });
@@ -1241,9 +1302,13 @@ function setupZoom() {
             }
         }
     });
-    // 滚动时重新渲染时间标记（虚拟滚动）
+    // 滚动时重新渲染时间标记和股票线（虚拟滚动）
     const debouncedRenderMarkers = debounce(renderTimeMarkers, 100);
-    axis.addEventListener("scroll", debouncedRenderMarkers);
+    const debouncedRenderStockLines = debounce(renderStockLines, 100);
+    axis.addEventListener("scroll", function() {
+        debouncedRenderMarkers();
+        debouncedRenderStockLines();
+    });
 }
 function yToDate(y, ppd) {
     if (!dateRange.start || !dateRange.end) return null;
@@ -1383,6 +1448,8 @@ async function loadDailyPricesForEvents(events) {
     });
 }
 async function reloadTimeline() {
+    if (currentAbortController) currentAbortController.abort();
+    currentAbortController = new AbortController();
     timelinePage = 1;
     allTimelineEvents = [];
     await loadTimelinePage(1);
@@ -1392,38 +1459,7 @@ async function loadMoreTimeline() {
     await loadTimelinePage(timelinePage + 1);
 }
 
-async function loadTimelinePage(page) {
-    const stockCode = document.getElementById("filter-stock-code").value;
-    const dateFrom  = document.getElementById("filter-date-from").value;
-    const dateTo    = document.getElementById("filter-date-to").value;
-    const heatMin   = document.getElementById("filter-timeline-heat-min").value;
-    const heatMax   = document.getElementById("filter-timeline-heat-max").value;
-    const params = new URLSearchParams({ page, per_page: 200 });
-    if (stockCode) params.append("stock_code", stockCode);
-    if (dateFrom)  params.append("date_from", dateFrom);
-    if (dateTo)    params.append("date_to", dateTo);
-    if (heatMin)   params.append("heat_min", heatMin);
-    if (heatMax)   params.append("heat_max", heatMax);
-    const res = await fetch(API_BASE + "/api/calendar/events?" + params.toString());
-    const data = await res.json();
-    const events = data.events || [];
-
-    timelinePage = data.page || page;
-    timelineTotalPages = data.total_pages || 1;
-
-    // 为新事件加载价格数据
-    await loadDailyPricesForEvents(events);
-    allTimelineEvents = allTimelineEvents.concat(events);
-
-    // 更新"加载更多"按钮
-    const loadMoreBtn = document.getElementById("load-more-btn");
-    if (loadMoreBtn) {
-        loadMoreBtn.style.display = timelinePage < timelineTotalPages ? "block" : "none";
-        loadMoreBtn.textContent = "加载更多（第 " + (timelinePage + 1) + " / " + timelineTotalPages + " 页）";
-    }
-
-    const eventsToUse = allTimelineEvents;
-    records = [];
+function processEvents(events, startIdx) {
     const priceMinInput = document.getElementById("filter-timeline-price-min").value;
     const priceMaxInput = document.getElementById("filter-timeline-price-max").value;
     const buyDayChangeMinInput = document.getElementById("filter-timeline-buy-day-change-min").value;
@@ -1436,36 +1472,35 @@ async function loadTimelinePage(page) {
     const buyDayChangeMax = buyDayChangeMaxInput ? parseFloat(buyDayChangeMaxInput) : Infinity;
     const nextDayChangeMin = nextDayChangeMinInput ? parseFloat(nextDayChangeMinInput) : -Infinity;
     const nextDayChangeMax = nextDayChangeMaxInput ? parseFloat(nextDayChangeMaxInput) : Infinity;
-    eventsToUse.forEach((e, idx) => {
+    const enableBuyDayChange = document.getElementById("filter-timeline-enable-buy-day-change").checked;
+    const enableNextDayChange = document.getElementById("filter-timeline-enable-next-day-change").checked;
+    const newRecords = [];
+    events.forEach((e, i) => {
+        const idx = startIdx + i;
         const buyPrice = e.insert_price != null ? Number(e.insert_price) : null;
         if (priceMinInput && (buyPrice === null || buyPrice < priceMin)) return;
         if (priceMaxInput && (buyPrice === null || buyPrice > priceMax)) return;
-        const enableBuyDayChange = document.getElementById("filter-timeline-enable-buy-day-change").checked;
         if (enableBuyDayChange) {
             const buyDayChangeRate = e.buy_day_change_rate != null ? Number(e.buy_day_change_rate) : null;
             if (buyDayChangeRate === null || buyDayChangeRate === undefined) return;
             if (buyDayChangeRate < buyDayChangeMin || buyDayChangeRate > buyDayChangeMax) return;
         }
-        const enableNextDayChange = document.getElementById("filter-timeline-enable-next-day-change").checked;
         if (enableNextDayChange) {
             const nextDayChangeRate = e.next_day_change_rate != null ? Number(e.next_day_change_rate) : null;
             if (nextDayChangeRate === null || nextDayChangeRate === undefined) return;
             if (nextDayChangeRate < nextDayChangeMin || nextDayChangeRate > nextDayChangeMax) return;
         }
-        const buyDate = parseDate(e.insert_date);
-        const highDate = parseDate(e.highest_price_date);
-        const lowDate = parseDate(e.lowest_price_date);
-        const rec = {
+        newRecords.push({
             groupId: e.stock_code + "_" + idx,
             stockCode: e.stock_code,
             stockName: e.stock_name,
-            buyDate: buyDate,
+            buyDate: parseDate(e.insert_date),
             buyPrice: buyPrice,
-            highDate: highDate,
+            highDate: parseDate(e.highest_price_date),
             highPrice: e.highest_price != null ? Number(e.highest_price) : null,
             highChange: e.highest_change_rate != null ? Number(e.highest_change_rate) : null,
             highDays: e.highest_days != null ? Number(e.highest_days) : null,
-            lowDate: lowDate,
+            lowDate: parseDate(e.lowest_price_date),
             lowPrice: e.lowest_price != null ? Number(e.lowest_price) : null,
             lowChange: e.lowest_change_rate != null ? Number(e.lowest_change_rate) : null,
             lowDays: e.lowest_days != null ? Number(e.lowest_days) : null,
@@ -1473,53 +1508,91 @@ async function loadTimelinePage(page) {
             nextDayChangeRate: e.next_day_change_rate != null ? Number(e.next_day_change_rate) : null,
             tradeHeatScore: e.trade_heat_score != null ? Number(e.trade_heat_score) : null,
             overallSuccessRate: e.overall_success_rate != null ? Number(e.overall_success_rate) : null,
-            dailyPrices: e.dailyPrices || null  // 每日价格数据
-        };
-        records.push(rec);
+            dailyPrices: e.dailyPrices || null
+        });
     });
+    return newRecords;
+}
+
+function updateDateRange() {
     if (records.length === 0) {
         dateRange.start = new Date();
         dateRange.end = new Date();
     } else {
-        const allDates = [];
+        let minTs = Infinity, maxTs = -Infinity;
         records.forEach(rec => {
-            if (rec.buyDate) allDates.push(rec.buyDate);
-            if (rec.highDate) allDates.push(rec.highDate);
-            if (rec.lowDate) allDates.push(rec.lowDate);
+            if (rec.buyDate) { const t = rec.buyDate.getTime(); if (t < minTs) minTs = t; if (t > maxTs) maxTs = t; }
+            if (rec.highDate) { const t = rec.highDate.getTime(); if (t < minTs) minTs = t; if (t > maxTs) maxTs = t; }
+            if (rec.lowDate) { const t = rec.lowDate.getTime(); if (t < minTs) minTs = t; if (t > maxTs) maxTs = t; }
         });
-        const minDate = new Date(Math.min(...allDates));
-        const maxDate = new Date(Math.max(...allDates));
-        dateRange.start = new Date(minDate);
+        dateRange.start = new Date(minTs);
         dateRange.start.setDate(dateRange.start.getDate() - 14);
         dateRange.start.setHours(0, 0, 0, 0);
-        dateRange.end = new Date(maxDate);
+        dateRange.end = new Date(maxTs);
         dateRange.end.setDate(dateRange.end.getDate() + 14);
         dateRange.end.setHours(23, 59, 59, 999);
     }
-    // 计算合适的pixelsPerDay，使时间轴显示到最大值
     const screenHeight = window.innerHeight || 800;
-    const availableHeight = screenHeight - 400; // 减去header、stats等高度
     const totalDays = getDaysBetween(dateRange.start, dateRange.end);
-    if (totalDays > 0) {
-        // 使用最大pixelsPerDay，让时间轴放大到最大值
-        pixelsPerDay = maxPixelsPerDay;
-    } else {
-        const daysToShow = 60;
-        pixelsPerDay = Math.max(0.5, Math.min(20, screenHeight / daysToShow));
+    pixelsPerDay = totalDays > 0 ? maxPixelsPerDay : Math.max(0.5, Math.min(20, screenHeight / 60));
+}
+
+async function loadTimelinePage(page) {
+    if (page === 1) showLoading("加载时间轴数据...");
+    const stockCode = document.getElementById("filter-stock-code").value;
+    const dateFrom  = document.getElementById("filter-date-from").value;
+    const dateTo    = document.getElementById("filter-date-to").value;
+    const heatMin   = document.getElementById("filter-timeline-heat-min").value;
+    const heatMax   = document.getElementById("filter-timeline-heat-max").value;
+    const params = new URLSearchParams({ page, per_page: 200 });
+    if (stockCode) params.append("stock_code", stockCode);
+    if (dateFrom)  params.append("date_from", dateFrom);
+    if (dateTo)    params.append("date_to", dateTo);
+    if (heatMin)   params.append("heat_min", heatMin);
+    if (heatMax)   params.append("heat_max", heatMax);
+
+    try {
+        const fetchOpts = currentAbortController ? { signal: currentAbortController.signal } : {};
+        const res = await fetch(API_BASE + "/api/calendar/events?" + params.toString(), fetchOpts);
+        const data = await res.json();
+        const events = data.events || [];
+
+        timelinePage = data.page || page;
+        timelineTotalPages = data.total_pages || 1;
+
+        await loadDailyPricesForEvents(events);
+        allTimelineEvents = allTimelineEvents.concat(events);
+
+        const loadMoreBtn = document.getElementById("load-more-btn");
+        if (loadMoreBtn) {
+            loadMoreBtn.style.display = timelinePage < timelineTotalPages ? "block" : "none";
+            loadMoreBtn.textContent = "加载更多（第 " + (timelinePage + 1) + " / " + timelineTotalPages + " 页）";
+        }
+
+        // 增量处理：只处理新事件，追加到已有 records
+        const startIdx = allTimelineEvents.length - events.length;
+        const newRecords = processEvents(events, startIdx);
+        if (page === 1) {
+            records = newRecords;
+        } else {
+            records = records.concat(newRecords);
+        }
+
+        updateDateRange();
+        renderTimeline();
+        updateFilteredTimelineStats();
+
+        if (page === 1) {
+            const axis = document.getElementById("timeline-axis");
+            if (axis) requestAnimationFrame(() => { axis.scrollTop = 0; });
+        }
+        updateCalc();
+    } catch (err) {
+        if (err.name === 'AbortError') return;
+        console.error("loadTimelinePage error:", err);
+    } finally {
+        if (page === 1) hideLoading();
     }
-    renderTimeline();
-    updateFilteredTimelineStats();
-    // 滚动到时间轴顶部（最新日期，因为时间轴已反转）
-    const axis = document.getElementById("timeline-axis");
-    if (axis) {
-        // 使用requestAnimationFrame确保DOM已更新
-        requestAnimationFrame(() => {
-            requestAnimationFrame(() => {
-                axis.scrollTop = 0; // 滚动到顶部，显示最新日期
-            });
-        });
-    }
-    updateCalc();
 }
 function resetFilters() {
     document.getElementById("filter-stock-code").value = "";
@@ -1539,10 +1612,6 @@ function resetFilters() {
     document.getElementById("filter-timeline-buy-day-change-max").disabled = true;
     document.getElementById("filter-timeline-next-day-change-min").disabled = true;
     document.getElementById("filter-timeline-next-day-change-max").disabled = true;
-    updateSliderValue("filter-timeline-buy-day-change-min", "filter-timeline-buy-day-change-min-value");
-    updateSliderValue("filter-timeline-buy-day-change-max", "filter-timeline-buy-day-change-max-value");
-    updateSliderValue("filter-timeline-next-day-change-min", "filter-timeline-next-day-change-min-value");
-    updateSliderValue("filter-timeline-next-day-change-max", "filter-timeline-next-day-change-max-value");
     document.getElementById("toggle-buy").checked = true;
     document.getElementById("toggle-sell-high").checked = true;
     document.getElementById("toggle-sell-low").checked = true;
@@ -1552,15 +1621,12 @@ function resetFilters() {
     reloadTimeline();
 }
 function setupSliderListeners() {
+    // 矩阵侧滑块（range inputs）
     const sliders = [
         { id: "filter-buy-day-change-min", valueId: "filter-buy-day-change-min-value", checkboxId: "filter-enable-buy-day-change" },
         { id: "filter-buy-day-change-max", valueId: "filter-buy-day-change-max-value", checkboxId: "filter-enable-buy-day-change" },
         { id: "filter-next-day-change-min", valueId: "filter-next-day-change-min-value", checkboxId: "filter-enable-next-day-change" },
-        { id: "filter-next-day-change-max", valueId: "filter-next-day-change-max-value", checkboxId: "filter-enable-next-day-change" },
-        { id: "filter-timeline-buy-day-change-min", valueId: "filter-timeline-buy-day-change-min-value", checkboxId: "filter-timeline-enable-buy-day-change" },
-        { id: "filter-timeline-buy-day-change-max", valueId: "filter-timeline-buy-day-change-max-value", checkboxId: "filter-timeline-enable-buy-day-change" },
-        { id: "filter-timeline-next-day-change-min", valueId: "filter-timeline-next-day-change-min-value", checkboxId: "filter-timeline-enable-next-day-change" },
-        { id: "filter-timeline-next-day-change-max", valueId: "filter-timeline-next-day-change-max-value", checkboxId: "filter-timeline-enable-next-day-change" }
+        { id: "filter-next-day-change-max", valueId: "filter-next-day-change-max-value", checkboxId: "filter-enable-next-day-change" }
     ];
     sliders.forEach(({ id, valueId, checkboxId }) => {
         const slider = document.getElementById(id);
@@ -1569,21 +1635,34 @@ function setupSliderListeners() {
             updateSliderValue(id, valueId);
             slider.addEventListener("input", function() {
                 updateSliderValue(id, valueId);
-                if (id.startsWith("filter-timeline-")) {
-                    debouncedReloadTimeline();
-                } else {
-                    debouncedUpdateCalc();
-                }
+                debouncedUpdateCalc();
             });
         }
         if (checkbox && slider) {
             checkbox.addEventListener("change", function() {
                 slider.disabled = !checkbox.checked;
-                if (id.startsWith("filter-timeline-")) {
-                    debouncedReloadTimeline();
-                } else {
-                    debouncedUpdateCalc();
-                }
+                debouncedUpdateCalc();
+            });
+        }
+    });
+
+    // 时间轴侧数字输入框（number inputs）
+    const numInputs = [
+        { id: "filter-timeline-buy-day-change-min", checkboxId: "filter-timeline-enable-buy-day-change" },
+        { id: "filter-timeline-buy-day-change-max", checkboxId: "filter-timeline-enable-buy-day-change" },
+        { id: "filter-timeline-next-day-change-min", checkboxId: "filter-timeline-enable-next-day-change" },
+        { id: "filter-timeline-next-day-change-max", checkboxId: "filter-timeline-enable-next-day-change" }
+    ];
+    numInputs.forEach(({ id, checkboxId }) => {
+        const input = document.getElementById(id);
+        const checkbox = document.getElementById(checkboxId);
+        if (input) {
+            input.addEventListener("input", debouncedReloadTimeline);
+        }
+        if (checkbox && input) {
+            checkbox.addEventListener("change", function() {
+                input.disabled = !checkbox.checked;
+                debouncedReloadTimeline();
             });
         }
     });
@@ -1648,6 +1727,7 @@ document.addEventListener("DOMContentLoaded", function() {
     // 初始化侧边栏收起/展开功能
     initSidebarToggle();
     setupZoom();
+    setupDelegatedStockEvents();
     loadStats();
     loadStockCodes();
     setupSliderListeners();
