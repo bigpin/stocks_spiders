@@ -19,6 +19,17 @@ def migrate_database():
             cursor.execute(col_def)
         except sqlite3.OperationalError:
             pass
+    for idx_def in [
+        'CREATE INDEX IF NOT EXISTS idx_signals_stock_code ON stock_signals(stock_code)',
+        'CREATE INDEX IF NOT EXISTS idx_signals_insert_date ON stock_signals(insert_date)',
+        'CREATE INDEX IF NOT EXISTS idx_signals_heat_score ON stock_signals(trade_heat_score)',
+        'CREATE INDEX IF NOT EXISTS idx_signals_success_rate ON stock_signals(overall_success_rate)',
+        'CREATE INDEX IF NOT EXISTS idx_daily_prices_signal_id ON stock_signal_daily_prices(signal_id)',
+    ]:
+        try:
+            cursor.execute(idx_def)
+        except sqlite3.OperationalError:
+            pass
     conn.commit()
     conn.close()
 
@@ -269,12 +280,11 @@ def get_signal_daily_prices():
     signal_id = request.args.get('signal_id', type=int)
     stock_code = request.args.get('stock_code', '')
     insert_date = request.args.get('insert_date', '')
-    
+
     conn = get_db_connection()
     cursor = conn.cursor()
-    
+
     if signal_id:
-        # 通过 signal_id 查询
         cursor.execute('''
             SELECT date, open, high, low, close, days_from_signal
             FROM stock_signal_daily_prices
@@ -282,7 +292,6 @@ def get_signal_daily_prices():
             ORDER BY days_from_signal ASC
         ''', (signal_id,))
     elif stock_code and insert_date:
-        # 通过 stock_code 和 insert_date 查找 signal_id，然后查询价格数据
         cursor.execute('''
             SELECT p.date, p.open, p.high, p.low, p.close, p.days_from_signal
             FROM stock_signal_daily_prices p
@@ -293,21 +302,43 @@ def get_signal_daily_prices():
     else:
         conn.close()
         return jsonify({'error': '需要提供 signal_id 或 (stock_code + insert_date)'}), 400
-    
+
     rows = cursor.fetchall()
-    prices = []
-    for row in rows:
-        prices.append({
-            'date': row[0],
-            'open': row[1],
-            'high': row[2],
-            'low': row[3],
-            'close': row[4],
-            'days_from_signal': row[5]
-        })
-    
+    prices = [{'date': r[0], 'open': r[1], 'high': r[2], 'low': r[3], 'close': r[4], 'days_from_signal': r[5]} for r in rows]
     conn.close()
     return jsonify({'prices': prices})
+
+@app.route('/api/signal-daily-prices-batch')
+def get_signal_daily_prices_batch():
+    """批量获取多个信号的每日价格数据"""
+    ids_raw = request.args.get('signal_ids', '')
+    if not ids_raw:
+        return jsonify({'error': '需要提供 signal_ids 参数（逗号分隔）'}), 400
+    try:
+        signal_ids = [int(x) for x in ids_raw.split(',') if x.strip()]
+    except ValueError:
+        return jsonify({'error': 'signal_ids 格式错误'}), 400
+    if not signal_ids:
+        return jsonify({})
+
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    placeholders = ','.join('?' * len(signal_ids))
+    cursor.execute(f'''
+        SELECT signal_id, date, open, high, low, close, days_from_signal
+        FROM stock_signal_daily_prices
+        WHERE signal_id IN ({placeholders})
+        ORDER BY signal_id, days_from_signal ASC
+    ''', signal_ids)
+    rows = cursor.fetchall()
+    result = {}
+    for r in rows:
+        sid = str(r[0])
+        if sid not in result:
+            result[sid] = []
+        result[sid].append({'date': r[1], 'open': r[2], 'high': r[3], 'low': r[4], 'close': r[5], 'days_from_signal': r[6]})
+    conn.close()
+    return jsonify(result)
 
 if __name__ == '__main__':
     migrate_database()

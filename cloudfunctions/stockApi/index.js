@@ -206,7 +206,6 @@ async function handleSignalDailyPrices(qs) {
   }
 
   if (qs.stock_code && qs.insert_date) {
-    // 先查 signal 的 _id（同步时用 SQLite id 作为 _id）
     const sigRes = await db.collection('web_signals')
       .where({ stock_code: qs.stock_code, insert_date: qs.insert_date })
       .limit(1)
@@ -225,6 +224,34 @@ async function handleSignalDailyPrices(qs) {
   }
 
   return { error: '需要提供 signal_id 或 (stock_code + insert_date)' }
+}
+
+// ============ Handler: /api/signal-daily-prices-batch ============
+async function handleSignalDailyPricesBatch(qs) {
+  const idsRaw = qs.signal_ids || ''
+  if (!idsRaw) return { error: '需要提供 signal_ids 参数（逗号分隔）' }
+  const signalIds = idsRaw.split(',').map(s => parseInt(s.trim())).filter(n => !isNaN(n))
+  if (!signalIds.length) return {}
+
+  // 云数据库 where in 一次最多查 500 条，分批
+  const batchSize = 500
+  const result = {}
+  for (let i = 0; i < signalIds.length; i += batchSize) {
+    const batch = signalIds.slice(i, i + batchSize)
+    const res = await db.collection('web_daily_prices')
+      .where({ signal_id: _.in(batch) })
+      .orderBy('signal_id', 'asc')
+      .orderBy('days_from_signal', 'asc')
+      .limit(100 * batch.length)
+      .get()
+    for (const doc of res.data) {
+      const { _id, signal_id, ...rest } = doc
+      const key = String(signal_id)
+      if (!result[key]) result[key] = []
+      result[key].push(rest)
+    }
+  }
+  return result
 }
 
 // ============ Router ============
@@ -255,6 +282,9 @@ exports.main = async (event, context) => {
         break
       case '/signal-daily-prices':
         result = await handleSignalDailyPrices(qs)
+        break
+      case '/signal-daily-prices-batch':
+        result = await handleSignalDailyPricesBatch(qs)
         break
       default:
         return { statusCode: 404, body: { error: `Unknown path: ${path}` } }

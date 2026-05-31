@@ -1,6 +1,16 @@
 // API 基础地址。空字符串 = 本地 Flask；部署时改为云函数 HTTP 触发器地址。
 const API_BASE = "";
 
+function debounce(fn, delay) {
+    let timer = null;
+    return function(...args) {
+        if (timer) clearTimeout(timer);
+        timer = setTimeout(() => { fn.apply(this, args); timer = null; }, delay);
+    };
+}
+const debouncedReloadTimeline = debounce(reloadTimeline, 300);
+const debouncedUpdateCalc = debounce(updateCalc, 300);
+
 let records = [];
 let selectedGroupId = null;
 let selectedRecord = null;
@@ -1342,54 +1352,29 @@ async function loadStockCodes() {
 async function loadDailyPricesForEvents(events) {
     // 为事件列表批量加载每日价格数据
     if (!events || events.length === 0) return;
-    
-    // 分批加载，每批50个，避免一次性请求太多数据
-    const batchSize = 50;
+
+    const idsWithPrice = events.filter(e => e.id).map(e => e.id);
+    if (idsWithPrice.length === 0) return;
+
+    // 分批请求，每批最多 200 个 id
+    const batchSize = 200;
     const dailyPricesMap = {};
-    
-    for (let i = 0; i < events.length; i += batchSize) {
-        const batch = events.slice(i, i + batchSize);
-        const promises = batch.map(async (event) => {
-            try {
-                const params = new URLSearchParams();
-                // 优先使用 signal_id，如果没有则使用 stock_code + insert_date
-                if (event.id) {
-                    params.append("signal_id", event.id);
-                } else {
-                    params.append("stock_code", event.stock_code);
-                    params.append("insert_date", event.insert_date);
-                }
-                
-                const res = await fetch(API_BASE + "/api/signal-daily-prices?" + params.toString());
-                const data = await res.json();
-                
-                if (data.prices && data.prices.length > 0) {
-                    const key = event.id ? `id_${event.id}` : `${event.stock_code}_${event.insert_date}`;
-                    return {
-                        key: key,
-                        prices: data.prices
-                    };
-                }
-                return null;
-            } catch (error) {
-                console.error(`Failed to load daily prices for ${event.stock_code}:`, error);
-                return null;
-            }
-        });
-        
-        const results = await Promise.all(promises);
-        results.forEach(result => {
-            if (result) {
-                dailyPricesMap[result.key] = result.prices;
-            }
-        });
+
+    for (let i = 0; i < idsWithPrice.length; i += batchSize) {
+        const batch = idsWithPrice.slice(i, i + batchSize);
+        try {
+            const res = await fetch(API_BASE + "/api/signal-daily-prices-batch?signal_ids=" + batch.join(","));
+            const data = await res.json();
+            Object.assign(dailyPricesMap, data);
+        } catch (error) {
+            console.error("Failed to load daily prices batch:", error);
+        }
     }
-    
+
     // 将每日价格数据附加到事件对象
     events.forEach(event => {
-        const key = event.id ? `id_${event.id}` : `${event.stock_code}_${event.insert_date}`;
-        if (dailyPricesMap[key]) {
-            event.dailyPrices = dailyPricesMap[key];
+        if (event.id && dailyPricesMap[String(event.id)]) {
+            event.dailyPrices = dailyPricesMap[String(event.id)];
         }
     });
 }
@@ -1560,9 +1545,9 @@ function setupSliderListeners() {
             slider.addEventListener("input", function() {
                 updateSliderValue(id, valueId);
                 if (id.startsWith("filter-timeline-")) {
-                    reloadTimeline();
+                    debouncedReloadTimeline();
                 } else {
-                    updateCalc();
+                    debouncedUpdateCalc();
                 }
             });
         }
@@ -1570,9 +1555,9 @@ function setupSliderListeners() {
             checkbox.addEventListener("change", function() {
                 slider.disabled = !checkbox.checked;
                 if (id.startsWith("filter-timeline-")) {
-                    reloadTimeline();
+                    debouncedReloadTimeline();
                 } else {
-                    updateCalc();
+                    debouncedUpdateCalc();
                 }
             });
         }
@@ -1659,9 +1644,9 @@ document.addEventListener("DOMContentLoaded", function() {
     });
     
     // Add resize listener to re-render timeline when window size changes
-    window.addEventListener("resize", function() {
+    window.addEventListener("resize", debounce(function() {
         renderTimeline();
-    });
+    }, 200));
 
     // 强制卖出勾选框联动（默认已勾选，天数框默认可用）
     const forceSellCheckbox = document.getElementById("filter-enable-force-sell");
@@ -1670,17 +1655,17 @@ document.addEventListener("DOMContentLoaded", function() {
         forceSellDaysInput.disabled = !forceSellCheckbox.checked;
         forceSellCheckbox.addEventListener("change", function() {
             forceSellDaysInput.disabled = !this.checked;
-            updateCalc();
+            debouncedUpdateCalc();
         });
         forceSellDaysInput.addEventListener("change", function() {
-            updateCalc();
+            debouncedUpdateCalc();
         });
     }
 
     const reachRateInput = document.getElementById("filter-reach-rate");
     if (reachRateInput) {
         reachRateInput.addEventListener("input", function() {
-            updateCalc();
+            debouncedUpdateCalc();
         });
     }
 });
