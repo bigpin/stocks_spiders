@@ -574,10 +574,6 @@ function resetCalcFilters() {
     document.getElementById("filter-enable-force-sell").checked = true;
     document.getElementById("filter-force-sell-days").value = "30";
     document.getElementById("filter-force-sell-days").disabled = false;
-    updateSliderValue("filter-buy-day-change-min", "filter-buy-day-change-min-value");
-    updateSliderValue("filter-buy-day-change-max", "filter-buy-day-change-max-value");
-    updateSliderValue("filter-next-day-change-min", "filter-next-day-change-min-value");
-    updateSliderValue("filter-next-day-change-max", "filter-next-day-change-max-value");
     updateCalc();
 }
 function updateCalc() {
@@ -1621,39 +1617,35 @@ function resetFilters() {
     reloadTimeline();
 }
 function setupSliderListeners() {
-    // 矩阵侧滑块（range inputs）
-    const sliders = [
-        { id: "filter-buy-day-change-min", valueId: "filter-buy-day-change-min-value", checkboxId: "filter-enable-buy-day-change" },
-        { id: "filter-buy-day-change-max", valueId: "filter-buy-day-change-max-value", checkboxId: "filter-enable-buy-day-change" },
-        { id: "filter-next-day-change-min", valueId: "filter-next-day-change-min-value", checkboxId: "filter-enable-next-day-change" },
-        { id: "filter-next-day-change-max", valueId: "filter-next-day-change-max-value", checkboxId: "filter-enable-next-day-change" }
+    // 矩阵侧数字输入框
+    const matrixInputs = [
+        { id: "filter-buy-day-change-min", checkboxId: "filter-enable-buy-day-change" },
+        { id: "filter-buy-day-change-max", checkboxId: "filter-enable-buy-day-change" },
+        { id: "filter-next-day-change-min", checkboxId: "filter-enable-next-day-change" },
+        { id: "filter-next-day-change-max", checkboxId: "filter-enable-next-day-change" }
     ];
-    sliders.forEach(({ id, valueId, checkboxId }) => {
-        const slider = document.getElementById(id);
+    matrixInputs.forEach(({ id, checkboxId }) => {
+        const input = document.getElementById(id);
         const checkbox = document.getElementById(checkboxId);
-        if (slider) {
-            updateSliderValue(id, valueId);
-            slider.addEventListener("input", function() {
-                updateSliderValue(id, valueId);
-                debouncedUpdateCalc();
-            });
+        if (input) {
+            input.addEventListener("input", debouncedUpdateCalc);
         }
-        if (checkbox && slider) {
+        if (checkbox && input) {
             checkbox.addEventListener("change", function() {
-                slider.disabled = !checkbox.checked;
+                input.disabled = !checkbox.checked;
                 debouncedUpdateCalc();
             });
         }
     });
 
-    // 时间轴侧数字输入框（number inputs）
-    const numInputs = [
+    // 时间轴侧数字输入框
+    const timelineInputs = [
         { id: "filter-timeline-buy-day-change-min", checkboxId: "filter-timeline-enable-buy-day-change" },
         { id: "filter-timeline-buy-day-change-max", checkboxId: "filter-timeline-enable-buy-day-change" },
         { id: "filter-timeline-next-day-change-min", checkboxId: "filter-timeline-enable-next-day-change" },
         { id: "filter-timeline-next-day-change-max", checkboxId: "filter-timeline-enable-next-day-change" }
     ];
-    numInputs.forEach(({ id, checkboxId }) => {
+    timelineInputs.forEach(({ id, checkboxId }) => {
         const input = document.getElementById(id);
         const checkbox = document.getElementById(checkboxId);
         if (input) {

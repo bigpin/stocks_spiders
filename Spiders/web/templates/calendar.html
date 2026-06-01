@@ -267,22 +267,11 @@
                                 <input type="checkbox" id="filter-enable-buy-day-change" style="width: 16px; height: 16px;">
                                 <div class="control-label" style="margin: 0;">买入当天涨跌范围</div>
                             </div>
-                            <div class="slider-group">
-                                <div class="slider-container">
-                                    <span class="slider-value" id="filter-buy-day-change-min-value">-10%</span>
-                                    <div class="slider-wrapper">
-                                        <input type="range" id="filter-buy-day-change-min" class="slider" min="-20" max="20" step="0.1" value="-10" disabled>
-                                    </div>
-                                    <span class="slider-value" id="filter-buy-day-change-max-value">10%</span>
-                                    <div class="slider-wrapper">
-                                        <input type="range" id="filter-buy-day-change-max" class="slider" min="-20" max="20" step="0.1" value="10" disabled>
-                                    </div>
-                                </div>
-                                <div class="slider-label-row">
-                                    <span>-20%</span>
-                                    <span>0%</span>
-                                    <span>20%</span>
-                                </div>
+                            <div style="display: flex; gap: 6px; align-items: center;">
+                                <input type="number" id="filter-buy-day-change-min" class="control-input" value="-10" min="-100" max="100" step="0.5" disabled style="width:70px;text-align:center;">
+                                <span style="color:#888;">~</span>
+                                <input type="number" id="filter-buy-day-change-max" class="control-input" value="10" min="-100" max="100" step="0.5" disabled style="width:70px;text-align:center;">
+                                <span style="color:#888;font-size:12px;">%</span>
                             </div>
                         </div>
                         <div class="control-group">
@@ -290,22 +279,11 @@
                                 <input type="checkbox" id="filter-enable-next-day-change" style="width: 16px; height: 16px;">
                                 <div class="control-label" style="margin: 0;">第二天涨跌范围</div>
                             </div>
-                            <div class="slider-group">
-                                <div class="slider-container">
-                                    <span class="slider-value" id="filter-next-day-change-min-value">-10%</span>
-                                    <div class="slider-wrapper">
-                                        <input type="range" id="filter-next-day-change-min" class="slider" min="-20" max="20" step="0.1" value="-10" disabled>
-                                    </div>
-                                    <span class="slider-value" id="filter-next-day-change-max-value">10%</span>
-                                    <div class="slider-wrapper">
-                                        <input type="range" id="filter-next-day-change-max" class="slider" min="-20" max="20" step="0.1" value="10" disabled>
-                                    </div>
-                                </div>
-                                <div class="slider-label-row">
-                                    <span>-20%</span>
-                                    <span>0%</span>
-                                    <span>20%</span>
-                                </div>
+                            <div style="display: flex; gap: 6px; align-items: center;">
+                                <input type="number" id="filter-next-day-change-min" class="control-input" value="-10" min="-100" max="100" step="0.5" disabled style="width:70px;text-align:center;">
+                                <span style="color:#888;">~</span>
+                                <input type="number" id="filter-next-day-change-max" class="control-input" value="10" min="-100" max="100" step="0.5" disabled style="width:70px;text-align:center;">
+                                <span style="color:#888;font-size:12px;">%</span>
                             </div>
                         </div>
                     </div>
