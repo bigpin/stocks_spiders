@@ -21,6 +21,7 @@ stock_kline_data.csv
 venv/
 env/
 ENV/
+node_modules/
 
 .DS_Store
 *.log
@@ -32,10 +33,16 @@ ENV/
 debug.html
 stock_list.txt
 com.dingli.spiders.run.plist
-Spiders/web/.env
+*.env
+!Spiders/web/env.example
 Spiders/web/web.pid
 Spiders/web/.cache/wechat_access_token.json
 scripts/cloudbase_lib/.cache
 
 .wolf
 .claude
+
+# IDE / editor
+Spiders/.claude/
+Spiders/web/.cursor/
+Spiders/web/.shared/
