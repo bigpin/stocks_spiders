@@ -1431,9 +1431,7 @@ class StockKlineSpider(scrapy.Spider):
         except Exception as e:
             error_msg = f"解析股票 {response.meta['stock_code']} 的K线数据出错: {str(e)}"
             self.logger.error(error_msg)
-            self.write_to_signal_file(f"\n错误: {error_msg}")
             import traceback
-            self.write_to_signal_file(traceback.format_exc())
             return  # 出现异常时直接返回，不继续执行
         
     def _process_compute_result(self, res):
@@ -1443,7 +1441,6 @@ class StockKlineSpider(scrapy.Spider):
 
         if res.get('error'):
             self.logger.error(f"处理 {stock_code} 信号计算结果出错: {res['error']}")
-            self.write_to_signal_file(f"\n错误: {stock_code} 信号计算失败: {res['error']}")
             return
         if res.get('skip'):
             self.logger.warning(f"股票 {stock_code}: {res.get('reason', '跳过')}")
@@ -1519,6 +1516,7 @@ class StockKlineSpider(scrapy.Spider):
                     self.current_time,
                     heat_score_val,
                 ))
+                self.conn.commit()
 
                 for signal in kdj_analysis['recent_signals']:
                     if signal:
@@ -1655,6 +1653,7 @@ class StockKlineSpider(scrapy.Spider):
                             self.current_time,
                             heat_score_val,
                         ))
+                        self.conn.commit()
                         
                         # 输出信号到文件
                         for signal in kdj_analysis['recent_signals']:
@@ -1736,9 +1735,7 @@ class StockKlineSpider(scrapy.Spider):
         except Exception as e:
             error_msg = f"处理股票 {stock_code} 的K线数据出错: {str(e)}"
             self.logger.error(error_msg)
-            self.write_to_signal_file(f"\n错误: {error_msg}")
             import traceback
-            self.write_to_signal_file(traceback.format_exc())
     
     def update_price_extremes(self, stock_code, stock_name, df):
         """更新数据库中记录的股票在日志记录时间30天内的最高和最低价格"""
