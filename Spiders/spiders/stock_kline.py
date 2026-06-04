@@ -20,6 +20,7 @@ from .baostock_helper import (
     fetch_kline_data_baostock_simple,
     get_stock_name_baostock,
     login_baostock,
+    logout_baostock,
     fetch_one_baostock_worker,
     fetch_and_compute_one_baostock_worker,
     read_stock_list_txt,
@@ -30,6 +31,7 @@ from .technical_indicators import TechnicalIndicators
 import sqlite3
 import bisect
 import time
+import signal
 
 
 def _min_distinct_signal_types_for_output():
@@ -822,6 +824,14 @@ class StockKlineSpider(scrapy.Spider):
                         self.logger.warning(
                             f"流水线阶段失败/超时 {len(failed_kline_codes)} 只，开始末尾串行重试 {retry_rounds} 轮"
                         )
+                        # 进程池崩溃后主进程的 baostock 连接可能已失效，强制重新登录
+                        try:
+                            logout_baostock()
+                        except Exception:
+                            pass
+                        login_baostock()
+                        self.logger.warning("串行重试前已重新登录 baostock")
+
                         remaining = set(failed_kline_codes)
                         for r in range(1, retry_rounds + 1):
                             if not remaining:
@@ -831,17 +841,26 @@ class StockKlineSpider(scrapy.Spider):
                                 time.sleep(min(2 * r, 8))
                             next_remaining = set()
                             for retry_code in list(remaining):
+                                retry_timeout = 180  # 每只股票重试最大耗时（秒）
                                 try:
-                                    retry_res = fetch_and_compute_one_baostock_worker(
-                                        retry_code,
-                                        self.start_date,
-                                        self.end_date,
-                                        INDICATORS_CONFIG,
-                                        SIGNAL_FILTERS,
-                                        self.current_time,
-                                        5,
-                                        self._list_name_by_code.get(retry_code),
-                                    )
+                                    def _alarm_handler(signum, frame):
+                                        raise TimeoutError(f"重试 {retry_code} 超时({retry_timeout}s)")
+                                    old_handler = signal.signal(signal.SIGALRM, _alarm_handler)
+                                    signal.alarm(retry_timeout)
+                                    try:
+                                        retry_res = fetch_and_compute_one_baostock_worker(
+                                            retry_code,
+                                            self.start_date,
+                                            self.end_date,
+                                            INDICATORS_CONFIG,
+                                            SIGNAL_FILTERS,
+                                            self.current_time,
+                                            3,
+                                            self._list_name_by_code.get(retry_code),
+                                        )
+                                    finally:
+                                        signal.alarm(0)
+                                        signal.signal(signal.SIGALRM, old_handler)
                                 except Exception as e:
                                     retry_res = {
                                         'stock_code': retry_code,
@@ -875,6 +894,13 @@ class StockKlineSpider(scrapy.Spider):
                 except BrokenProcessPool as e:
                     # 回退到串行流式（稳定优先）
                     self.logger.warning(f"流水线并行失败，回退串行流式: {e}")
+                    # 强制重新登录 baostock，避免使用进程池遗留的失效连接
+                    try:
+                        logout_baostock()
+                    except Exception:
+                        pass
+                    login_baostock()
+                    self.logger.warning("串行流式前已重新登录 baostock")
                     results = {}
                     done = 0
                     for code in self.stock_codes:
@@ -886,7 +912,7 @@ class StockKlineSpider(scrapy.Spider):
                                 INDICATORS_CONFIG,
                                 SIGNAL_FILTERS,
                                 self.current_time,
-                                5,
+                                3,
                                 self._list_name_by_code.get(code),
                             )
                         except Exception as e2:
