@@ -761,6 +761,26 @@ if __name__ == "__main__":
     # 运行获取不带技术指标K线数据的爬虫
     # run_stock_kline_spider_without_indicators()
 
+    # 将信号分析报告内容打印到日志
+    report_file = os.path.join(project_root, f'kdj_signals_{target_date}.txt')
+    if os.path.exists(report_file):
+        try:
+            with open(report_file, 'r', encoding='utf-8') as f:
+                report_content = f.read()
+            if report_content.strip():
+                log_to_file(log_file, "=" * 80)
+                log_to_file(log_file, f"[REPORT] 信号分析报告内容 ({report_file}):")
+                log_to_file(log_file, "=" * 80)
+                log_to_file(log_file, report_content)
+                log_to_file(log_file, "=" * 80)
+                log_to_file(log_file, f"[REPORT] 报告内容打印完成，共 {len(report_content)} 字符")
+            else:
+                log_to_file(log_file, f"[REPORT] 报告文件为空: {report_file}")
+        except Exception as e:
+            log_to_file(log_file, f"[REPORT] [ERROR] 读取报告文件失败: {e}", also_print=False)
+    else:
+        log_to_file(log_file, f"[REPORT] 报告文件不存在: {report_file}")
+
     # 清理超过30天的日线价格数据
     log_to_file(log_file, "[STEP 2.5] 清理过期日线数据...")
     try:
