@@ -2280,5 +2280,27 @@ class StockKlineSpider(scrapy.Spider):
         }
     
     def close(self, reason):
-        """关闭数据库连接"""
+        """关闭数据库连接，并打印信号分析报告"""
+        # 打印信号分析报告内容到日志
+        try:
+            report_file = os.path.join(os.getcwd(), self.signal_file)
+            if os.path.exists(report_file):
+                with open(report_file, 'r', encoding='utf-8') as f:
+                    report_content = f.read()
+                if report_content.strip():
+                    self.logger.warning("=" * 80)
+                    self.logger.warning(f"[REPORT] 信号分析报告内容:")
+                    self.logger.warning("=" * 80)
+                    for line in report_content.split('\n'):
+                        if line.strip():
+                            self.logger.warning(line)
+                    self.logger.warning("=" * 80)
+                    self.logger.warning(f"[REPORT] 报告内容打印完成，共 {len(report_content)} 字符")
+                else:
+                    self.logger.warning(f"[REPORT] 报告文件为空: {self.signal_file}")
+            else:
+                self.logger.warning(f"[REPORT] 报告文件不存在: {self.signal_file}")
+        except Exception as e:
+            self.logger.error(f"[REPORT] 读取报告文件失败: {e}")
+
         self.conn.close()
