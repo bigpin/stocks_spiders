@@ -2289,13 +2289,12 @@ class StockKlineSpider(scrapy.Spider):
                     report_content = f.read()
                 if report_content.strip():
                     self.logger.warning("=" * 80)
-                    self.logger.warning(f"[REPORT] 信号分析报告内容:")
+                    self.logger.warning(f"[REPORT] 报告内容打印完成，共 {len(report_content)} 字符")
                     self.logger.warning("=" * 80)
                     for line in report_content.split('\n'):
                         if line.strip():
                             self.logger.warning(line)
                     self.logger.warning("=" * 80)
-                    self.logger.warning(f"[REPORT] 报告内容打印完成，共 {len(report_content)} 字符")
                 else:
                     self.logger.warning(f"[REPORT] 报告文件为空: {self.signal_file}")
             else:
