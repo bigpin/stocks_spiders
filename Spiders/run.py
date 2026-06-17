@@ -627,7 +627,58 @@ def validate_date(date_str):
         return False, f"日期无效：{e}"
 
 
+_lock_fd = None  # 保持锁文件描述符打开，确保 fcntl.flock 在进程生命周期内持续生效
+
+
+def _acquire_pid_lock(lock_path):
+    """尝试获取 PID 锁文件，防止并发执行。返回 True 表示成功获取锁。"""
+    global _lock_fd
+    import fcntl
+    try:
+        # 先尝试以排他方式创建/打开锁文件
+        fd = os.open(lock_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC)
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except (IOError, OSError):
+            os.close(fd)
+            return False
+        # 获取锁成功，写入 PID 并保持 fd 打开
+        os.write(fd, str(os.getpid()).encode())
+        os.fsync(fd)
+        _lock_fd = fd
+        return True
+    except (IOError, OSError):
+        return False
+
+
+def _release_pid_lock(lock_path):
+    """释放锁文件并删除。"""
+    global _lock_fd
+    try:
+        if _lock_fd is not None:
+            import fcntl
+            fcntl.flock(_lock_fd, fcntl.LOCK_UN)
+            os.close(_lock_fd)
+            _lock_fd = None
+    except OSError:
+        pass
+    try:
+        if os.path.exists(lock_path):
+            os.remove(lock_path)
+    except OSError:
+        pass
+
+
 if __name__ == "__main__":
+    # 防止并发执行：通过 PID 锁文件互斥
+    _pid_lock_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), '.spiders.pid.lock')
+    if not _acquire_pid_lock(_pid_lock_path):
+        print(f"另一个爬虫进程正在运行，退出当前实例 (PID: {os.getpid()})", file=sys.stderr)
+        sys.exit(0)
+
+    import atexit
+    atexit.register(_release_pid_lock, _pid_lock_path)
+
     # 轮转 launchd 外层日志，避免 /tmp/spiders.launchd.test.log 无限增长
     _launchd_log = "/tmp/spiders.launchd.test.log"
     _max_bytes = 20 * 1024 * 1024

@@ -47,3 +47,5 @@ scripts/cloudbase_lib/.cache
 Spiders/.claude/
 Spiders/web/.cursor/
 Spiders/web/.shared/
+
+.codegraph/

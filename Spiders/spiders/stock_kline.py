@@ -1024,9 +1024,6 @@ class StockKlineSpider(scrapy.Spider):
                     if done == 1 or done % 50 == 0 or done == total:
                         self.logger.warning(f"已拉取 {done}/{total} 只")
 
-            # 从 K 线结果中提取估值写入 CSV（替代独立的估值抓取阶段）
-            self._export_valuation_csv(results)
-
             # 并行计算信号（CPU 密集型，与网络无关）
             from .stock_config import PROCESS_KLINE_WORKERS
             from .signal_compute_worker import compute_signals_for_stock
@@ -1097,6 +1094,9 @@ class StockKlineSpider(scrapy.Spider):
                 if count == 1 or count % 50 == 0 or count == len(valid_items):
                     self.logger.warning(f"开始处理第{count}个股票 {s_code} 的数据")
                 self.process_kline_data(s_code, s_name, s_df)
+
+            # 从 K 线结果中提取估值写入 CSV（替代独立的估值抓取阶段）
+            self._export_valuation_csv(results)
             return
 
         # 非 baostock：原有逐只请求逻辑（东方财富等）
@@ -1129,7 +1129,22 @@ class StockKlineSpider(scrapy.Spider):
             )
     
     def write_to_signal_file(self, content):
-        """将内容写入信号文件"""
+        """将内容写入信号文件（带股票级去重，防止并发或重试导致重复）"""
+        if not hasattr(self, '_written_signal_stocks'):
+            self._written_signal_stocks = set()
+        if content.startswith('\n股票 ') and '股票信号分析结果' in content:
+            import re
+            m = re.search(r'\((\w+)\)', content)
+            if m:
+                code = m.group(1)
+                if code in self._written_signal_stocks:
+                    self.logger.warning(f"股票 {code} 信号已写入文件，跳过重复写入")
+                    self._skip_current_signal_block = True
+                    return
+                self._written_signal_stocks.add(code)
+                self._skip_current_signal_block = False
+        if getattr(self, '_skip_current_signal_block', False):
+            return
         with open(self.signal_file, 'a', encoding='utf-8') as f:
             f.write(f"{content}\n")
         # 同时保存到数据库
@@ -1439,12 +1454,21 @@ class StockKlineSpider(scrapy.Spider):
         stock_code = res['stock_code']
         stock_name = res['stock_name']
 
+        # 去重：同一股票只处理一次
+        if not hasattr(self, '_processed_stock_codes'):
+            self._processed_stock_codes = set()
+        if stock_code in self._processed_stock_codes:
+            self.logger.warning(f"股票 {stock_code} 已处理过，跳过重复处理")
+            return
+
         if res.get('error'):
             self.logger.error(f"处理 {stock_code} 信号计算结果出错: {res['error']}")
             return
         if res.get('skip'):
             self.logger.warning(f"股票 {stock_code}: {res.get('reason', '跳过')}")
             return
+
+        self._processed_stock_codes.add(stock_code)
 
         kdj_analysis = res['kdj_analysis']
         vh = res.get('heat_score')
@@ -1549,12 +1573,20 @@ class StockKlineSpider(scrapy.Spider):
     def process_kline_data(self, stock_code, stock_name, df):
         """
         处理K线数据（用于baostock数据源）
-        
+
         参数:
             stock_code: 股票代码
             stock_name: 股票名称
             df: pandas.DataFrame，包含K线数据
         """
+        # 去重：同一股票只处理一次
+        if not hasattr(self, '_processed_stock_codes'):
+            self._processed_stock_codes = set()
+        if stock_code in self._processed_stock_codes:
+            self.logger.warning(f"股票 {stock_code} 已处理过，跳过重复处理")
+            return
+        self._processed_stock_codes.add(stock_code)
+
         try:
             # 检查数据量是否足够
             min_history_days = SIGNAL_FILTERS.get('min_history_days', 60)
@@ -2280,20 +2312,61 @@ class StockKlineSpider(scrapy.Spider):
         }
     
     def close(self, reason):
-        """关闭数据库连接，并打印信号分析报告"""
-        # 打印信号分析报告内容到日志
+        """关闭数据库连接，并打印信号分析报告摘要"""
+        # 打印信号分析报告摘要到日志
         try:
             report_file = os.path.join(os.getcwd(), self.signal_file)
             if os.path.exists(report_file):
                 with open(report_file, 'r', encoding='utf-8') as f:
                     report_content = f.read()
                 if report_content.strip():
+                    # 解析报告，提取每只股票的摘要
+                    stocks = []
+                    current_stock = []
+                    in_stock = False
+
+                    for line in report_content.split('\n'):
+                        line = line.strip()
+                        if not line:
+                            continue
+
+                        # 检测股票标题行
+                        if line.startswith('股票 ') and '股票信号分析结果' in line:
+                            if current_stock:
+                                stocks.append(current_stock)
+                            current_stock = [line]
+                            in_stock = True
+                        elif in_stock and line.startswith('总体成功率:'):
+                            current_stock.append(line)
+                        elif in_stock and line.startswith('总信号数:'):
+                            current_stock.append(line)
+                        elif in_stock and line.startswith('总成功数:'):
+                            current_stock.append(line)
+                        elif in_stock and line.startswith('最近交易热度评分:'):
+                            current_stock.append(line)
+                        elif line.startswith('---'):
+                            # 分隔线，结束当前股票
+                            if current_stock:
+                                stocks.append(current_stock)
+                                current_stock = []
+                            in_stock = False
+
+                    # 添加最后一只股票
+                    if current_stock:
+                        stocks.append(current_stock)
+
+                    # 输出摘要
                     self.logger.warning("=" * 80)
                     self.logger.warning(f"[REPORT] 报告内容打印完成，共 {len(report_content)} 字符")
                     self.logger.warning("=" * 80)
-                    for line in report_content.split('\n'):
-                        if line.strip():
+                    self.logger.warning(f"[REPORT] 共 {len(stocks)} 只股票触发信号")
+                    self.logger.warning("=" * 80)
+
+                    for stock_lines in stocks:
+                        for line in stock_lines:
                             self.logger.warning(line)
+                        self.logger.warning("")
+
                     self.logger.warning("=" * 80)
                 else:
                     self.logger.warning(f"[REPORT] 报告文件为空: {self.signal_file}")
