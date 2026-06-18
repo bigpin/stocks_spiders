@@ -67,7 +67,7 @@ DATA_SOURCE = 'baostock'  # 默认使用 baostock
 
 # baostock 并行拉取进程数（仅当 DATA_SOURCE='baostock' 时生效）
 # 实测 8 进程稳定；12 进程会出现大量 Broken pipe，不建议超过 8
-BAOSTOCK_FETCH_WORKERS = 3
+BAOSTOCK_FETCH_WORKERS = 6
 
 # 每个子进程内，每 N 次 K 线 query_history_k_data_plus 后强制 logout+login（0 表示关闭）
 # 不宜过小（如 <30）：过于频繁重登易被服务端断连；建议 50～150

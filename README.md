@@ -1,11 +1,11 @@
 # 股票信号分析系统
 
-基于 Scrapy 的股票数据爬取和技术分析系统，支持 K 线数据采集、技术指标计算、信号生成和可视化展示。
+基于 baostock 的股票数据采集和技术分析系统，支持 K 线数据采集、技术指标计算、信号生成和可视化展示。
 
 ## 功能特性
 
 ### 数据爬取
-- 📈 **股票 K 线数据爬取**：从东方财富获取股票历史 K 线数据
+- 📈 **股票 K 线数据采集**：通过 baostock 获取股票历史 K 线数据
 - 📊 **技术指标计算**：自动计算 KDJ、MACD、RSI、布林带等技术指标
 - 🔍 **股票列表获取**：支持批量获取股票代码列表
 - 💾 **数据存储**：使用 SQLite 数据库存储股票信号和分析结果
@@ -28,12 +28,12 @@
 
 ```
 Spiders/
-├── spiders/              # Scrapy 爬虫
-│   ├── stock_kline.py    # K 线数据爬虫（主要）
-│   ├── stock_detail.py   # 股票详情爬虫
-│   ├── get_stock_list.py # 股票列表获取
+├── spiders/              # 数据采集与分析
+│   ├── stock_kline.py    # 核心类 StockKlineSpider（数据采集 + 信号分析）
+│   ├── baostock_helper.py # baostock API 封装
+│   ├── signal_compute_worker.py # 多进程信号计算
 │   ├── technical_indicators.py  # 技术指标计算
-│   └── stock_config.py   # 股票配置
+│   └── stock_config.py   # 配置（指标参数、信号过滤、进程池）
 ├── web/                  # Web 应用
 │   ├── app.py           # Flask 应用
 │   ├── templates/       # HTML 模板
@@ -41,9 +41,8 @@ Spiders/
 │   │   └── index.html     # 列表视图（/list）
 │   ├── static/          # CSS / JS
 │   └── requirements.txt # Python 依赖
-├── run.py               # 运行脚本
-├── settings.py          # Scrapy 配置
-└── stock_signals.db     # SQLite（位于仓库根目录，与 `Spiders/` 子目录同级；Web 默认路径见下文）
+├── run.py               # 运行脚本（主入口）
+└── stock_signals.db     # SQLite（位于仓库根目录）
 ```
 
 ## 安装依赖
@@ -51,10 +50,10 @@ Spiders/
 ### Python 环境要求
 - Python 3.11+
 
-### 安装 Scrapy 相关依赖
+### 安装依赖
 
 ```bash
-pip install scrapy scrapy-splash pandas ta
+pip install -r requirements.txt
 ```
 
 （`sqlite3` 为 Python 标准库模块，无需通过 pip 安装。）
@@ -68,32 +67,24 @@ pip install -r requirements.txt
 
 ## 使用方法
 
-### 1. 爬取股票数据
+### 1. 运行数据采集
 
-#### 从文件读取股票列表
+#### 从文件读取股票列表（默认）
 
 ```bash
 python Spiders/run.py
 ```
 
-或使用 Scrapy 命令：
+#### 指定日期
 
 ```bash
-cd Spiders
-scrapy crawl stock_kline -a use_file=true -a stock_file=../stock_list.txt -a calc_indicators=true
-```
-
-#### 指定股票代码
-
-```bash
-scrapy crawl stock_kline -a stock_codes=sh603288,sz000858 -a calc_indicators=true
+python Spiders/run.py --date 20260501
 ```
 
 #### 获取昨天的数据
 
-```python
-from Spiders.run import run_stock_kline_spider_with_yesterday
-run_stock_kline_spider_with_yesterday('sh603288,sz000858')
+```bash
+python Spiders/run.py --yesterday
 ```
 
 ### 2. 运行 Web 应用
@@ -141,11 +132,11 @@ Web 时间轴接口 `GET /api/calendar/events` 会返回上述业务字段（含
 
 ## 配置说明
 
-### Scrapy 配置 (settings.py)
+### 数据采集配置 (spiders/stock_config.py)
 
-- `SPLASH_URL`: Splash 服务地址（用于 JavaScript 渲染）
-- `DUPEFILTER_CLASS`: 自定义去重过滤器
-- `REQUEST_FINGERPRINTER_IMPLEMENTATION`: 请求指纹实现版本
+- `INDICATORS_CONFIG`: 技术指标参数
+- `SIGNAL_FILTERS`: 信号过滤条件（流动性、估值、质量门槛）
+- `BAOSTOCK_FETCH_WORKERS`: baostock 并行拉取进程数
 
 ### Web 应用配置
 
@@ -155,15 +146,11 @@ Web 时间轴接口 `GET /api/calendar/events` 会返回上述业务字段（含
 ## 注意事项
 
 1. **数据文件**：`.gitignore` 已配置忽略数据文件（`.csv`、`.db`、`kdj_signals_*.txt`），这些文件不会提交到 Git
-2. **API Key**：使用股票列表 API 时需要配置 API Key
-3. **Splash 服务**：如果使用 `scrapy-splash`，需要先启动 Splash 服务
-4. **数据库迁移**：Web 应用启动时会自动执行数据库迁移，添加新字段
+2. **数据库迁移**：Web 应用启动时会自动执行数据库迁移，添加新字段
 
 ## 相关链接
 
 - [GitHub 仓库](https://github.com/bigpin/stocks_spiders)
-- [链家爬虫文章](https://mp.weixin.qq.com/s?__biz=MjM5Mzg5NDQ2MA==&mid=2257483733&idx=1&sn=09b33c1e252ae568d8ce173d3fd21784)
-- [东方财富爬虫文章](https://mp.weixin.qq.com/s?__biz=MjM5Mzg5NDQ2MA==&mid=2257483733&idx=2&sn=2fdd627ce028b3b945c27658a0c1e06b)
 
 ## License
 

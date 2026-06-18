@@ -1,18 +1,12 @@
-import scrapy
 import json
 import csv
 import os
+import logging
 import pandas as pd
 from datetime import datetime, timedelta
-from items import EastMoneyItem
 from .stock_config import (
-    KLINE_API,
-    KLINE_FIELD_MAPPING,
-    STOCK_PREFIX_MAP,
-    HEADERS,
     INDICATORS_CONFIG,
     SIGNAL_FILTERS,
-    DATA_SOURCE,
     BAOSTOCK_FETCH_WORKERS,
     BAOSTOCK_PIPELINE_FETCH_AND_COMPUTE,
 )
@@ -39,9 +33,7 @@ def _min_distinct_signal_types_for_output():
     return int(SIGNAL_FILTERS.get('signal_output', {}).get('min_distinct_signal_types', 6))
 
 
-class StockKlineSpider(scrapy.Spider):
-    name = "stock_kline"
-    allowed_domains = ["eastmoney.com", "push2his.eastmoney.com"]
+class StockKlineSpider:
     # custom_settings = {
     #         'FEEDS': {
     #             'kline_data.csv': {
@@ -88,10 +80,15 @@ class StockKlineSpider(scrapy.Spider):
     #         }
     #     }
     
-    def __init__(self, stock_codes=None, use_file=False, stock_file='stock_list.txt', 
-                 kline_type='daily', fq_type='forward', start_date=None, end_date=None, 
-                 calc_indicators=True, *args, **kwargs):
-        super(StockKlineSpider, self).__init__(*args, **kwargs)
+    def __init__(self, stock_codes=None, use_file=False, stock_file='stock_list.txt',
+                 kline_type='daily', fq_type='forward', start_date=None, end_date=None,
+                 calc_indicators=True):
+        self.logger = logging.getLogger(__name__)
+        if not self.logger.handlers:
+            handler = logging.StreamHandler()
+            handler.setFormatter(logging.Formatter('[%(asctime)s] %(levelname)s %(message)s', datefmt='%Y-%m-%d %H:%M:%S'))
+            self.logger.addHandler(handler)
+            self.logger.setLevel(logging.INFO)
         
         # 获取指定日期或当前日期
         self.current_date = datetime.strptime(end_date, "%Y%m%d") if end_date else datetime.now()
@@ -600,248 +597,325 @@ class StockKlineSpider(scrapy.Spider):
         
         self.conn.commit()
     
-    def start_requests(self):
-        # 根据数据源配置选择不同的获取方式
-        if DATA_SOURCE == 'baostock':
-            # 多进程并行：每个进程独立连接 baostock，互不干扰，可真正并行
-            workers = max(1, int(BAOSTOCK_FETCH_WORKERS))
-            total = len(self.stock_codes)
-            self.logger.warning(f"开始拉取 {total} 只股票，{workers} 进程并行，每 50 只打印进度")
-            results = {}
-            done = 0
+    def run(self):
+        # 多进程并行：每个进程独立连接 baostock，互不干扰，可真正并行
+        workers = max(1, int(BAOSTOCK_FETCH_WORKERS))
+        total = len(self.stock_codes)
+        self.logger.warning(f"开始拉取 {total} 只股票，{workers} 进程并行，每 50 只打印进度")
+        results = {}
+        done = 0
 
-            # 串行流式：拉完一只就计算一只，降低同一时间的网络请求压力
-            if workers <= 1:
-                self.logger.warning("启用串行流式模式：拉取完成一只股票后立即计算信号")
-                for code in self.stock_codes:
-                    try:
-                        results[code] = fetch_one_baostock_worker(
+        # 串行流式：拉完一只就计算一只，降低同一时间的网络请求压力
+        if workers <= 1:
+            self.logger.warning("启用串行流式模式：拉取完成一只股票后立即计算信号")
+            for code in self.stock_codes:
+                try:
+                    results[code] = fetch_one_baostock_worker(
+                        code,
+                        self.start_date,
+                        self.end_date,
+                        5,
+                        self._list_name_by_code.get(code),
+                    )
+                except Exception as e:
+                    self.logger.error(f"拉取 {code} 出错(串行流式): {e}")
+                    results[code] = (code, None, None)
+
+                done += 1
+                if done == 1 or done % 50 == 0 or done == total:
+                    self.logger.warning(f"已拉取 {done}/{total} 只")
+
+                s_code, s_name, s_df = results[code]
+                if s_df is not None and not s_df.empty:
+                    self.process_kline_data(s_code, s_name, s_df)
+
+            # 从 K 线结果中提取估值写入 CSV（替代独立的估值抓取阶段）
+            self._export_valuation_csv(results)
+            return
+
+        # 并行流水线：每个子进程"拉取后立刻计算"，主进程仅处理 I/O
+        if BAOSTOCK_PIPELINE_FETCH_AND_COMPUTE:
+            self.logger.warning("启用并行流水线模式：子进程拉取K线后立即计算信号，主进程负责写入/导出")
+            try:
+                failed_kline_codes = set()
+                worker_timeout = 300  # 单只股票最大处理时间（秒）
+                poll_interval = 30  # 每 30 秒检查一次卡死进程
+                consecutive_stuck = 0  # 连续卡死计数
+                stuck_threshold = workers  # 连续卡死数 >= worker 数时重启进程池
+                max_restarts = 3  # 最大重启次数
+
+                remaining_codes = list(self.stock_codes)
+                submitted_codes = set()
+                pool_broken = False
+                pool_broken_reason = None
+                restart_count = 0
+
+                def _create_executor():
+                    return ProcessPoolExecutor(max_workers=workers)
+
+                def _submit_batch(exec, codes, batch_size):
+                    batch = {}
+                    for code in codes[:batch_size]:
+                        if code in submitted_codes:
+                            continue
+                        submitted_codes.add(code)
+                        f = exec.submit(
+                            fetch_and_compute_one_baostock_worker,
                             code,
                             self.start_date,
                             self.end_date,
+                            INDICATORS_CONFIG,
+                            SIGNAL_FILTERS,
+                            self.current_time,
                             5,
                             self._list_name_by_code.get(code),
                         )
-                    except Exception as e:
-                        self.logger.error(f"拉取 {code} 出错(串行流式): {e}")
-                        results[code] = (code, None, None)
+                        batch[f] = code
+                    return batch
 
-                    done += 1
-                    if done == 1 or done % 50 == 0 or done == total:
-                        self.logger.warning(f"已拉取 {done}/{total} 只")
-
-                    s_code, s_name, s_df = results[code]
-                    if s_df is not None and not s_df.empty:
-                        self.process_kline_data(s_code, s_name, s_df)
-
-                # 从 K 线结果中提取估值写入 CSV（替代独立的估值抓取阶段）
-                self._export_valuation_csv(results)
-                return
-
-            # 并行流水线：每个子进程"拉取后立刻计算"，主进程仅处理 I/O
-            if BAOSTOCK_PIPELINE_FETCH_AND_COMPUTE:
-                self.logger.warning("启用并行流水线模式：子进程拉取K线后立即计算信号，主进程负责写入/导出")
-                try:
-                    failed_kline_codes = set()
-                    worker_timeout = 300  # 单只股票最大处理时间（秒）
-                    poll_interval = 30  # 每 30 秒检查一次卡死进程
-                    consecutive_stuck = 0  # 连续卡死计数
-                    stuck_threshold = workers  # 连续卡死数 >= worker 数时重启进程池
-                    max_restarts = 3  # 最大重启次数
-
-                    remaining_codes = list(self.stock_codes)
-                    submitted_codes = set()
-                    pool_broken = False
-                    pool_broken_reason = None
-                    restart_count = 0
-
-                    def _create_executor():
-                        return ProcessPoolExecutor(max_workers=workers)
-
-                    def _submit_batch(exec, codes, batch_size):
-                        batch = {}
-                        for code in codes[:batch_size]:
-                            if code in submitted_codes:
-                                continue
-                            submitted_codes.add(code)
-                            f = exec.submit(
-                                fetch_and_compute_one_baostock_worker,
-                                code,
-                                self.start_date,
-                                self.end_date,
-                                INDICATORS_CONFIG,
-                                SIGNAL_FILTERS,
-                                self.current_time,
-                                5,
-                                self._list_name_by_code.get(code),
-                            )
-                            batch[f] = code
-                        return batch
-
-                    def _handle_result(res, code):
-                        """处理单个结果（写文件/写库/更新极值等 I/O），返回是否应加入重试集"""
-                        try:
-                            self._process_compute_result(res)
-                        except Exception as e:
-                            self.logger.error(f"处理 {code} 流水线结果出错: {e}")
-
-                        should_retry = False
-                        if res.get('skip'):
-                            reason = res.get('reason', '')
-                            if reason in ('K线拉取失败', '超时', '已取消') or '卡死' in reason:
-                                should_retry = True
-
-                        df = res.get('df')
-                        if df is not None and hasattr(df, "empty") and not df.empty:
-                            name = res.get('stock_name') or code
-                            results[code] = (code, name, df.tail(1))
-                        else:
-                            results[code] = (code, res.get('stock_name') or code, None)
-
-                        return should_retry
-
-                    executor = _create_executor()
-                    futures = _submit_batch(executor, remaining_codes, workers * 2)
-                    pending = set(futures.keys())
-                    future_start = {f: time.time() for f in pending}
-
-                    while pending and not pool_broken:
-                        done_set, _ = wait(pending, timeout=poll_interval, return_when=FIRST_COMPLETED)
-
-                        # 处理已完成的 future
-                        for future in done_set:
-                            pending.discard(future)
-                            code = futures[future]
-                            try:
-                                res = future.result(timeout=5)
-                            except CancelledError:
-                                res = {'stock_code': code, 'stock_name': code, 'skip': True, 'reason': '已取消'}
-                            except TimeoutError:
-                                self.logger.error(f"拉取+计算 {code} 超时")
-                                res = {'stock_code': code, 'stock_name': code, 'skip': True, 'reason': '超时'}
-                            except Exception as e:
-                                is_broken = isinstance(e, (BrokenProcessPool, BrokenPipeError))
-                                if not is_broken and isinstance(e, OSError) and "Broken pipe" in str(e):
-                                    is_broken = True
-                                if is_broken:
-                                    pool_broken = True
-                                    pool_broken_reason = str(e)
-                                    self.logger.error(f"进程池通信异常（流水线），将回退到串行流式。原因: {pool_broken_reason}")
-                                    for f in list(pending):
-                                        f.cancel()
-                                    pending.clear()
-                                    break
-                                self.logger.error(f"拉取+计算 {code} 出错: {e}")
-                                res = {'stock_code': code, 'stock_name': code, 'skip': True, 'reason': str(e)}
-
-                            consecutive_stuck = 0
-                            if _handle_result(res, code):
-                                failed_kline_codes.add(code)
-
-                            done += 1
-                            if done == 1 or done % 50 == 0 or done == total:
-                                self.logger.warning(f"已拉取+计算 {done}/{total} 只")
-
-                        # 检查卡死的 future
-                        if not pool_broken:
-                            now = time.time()
-                            stuck = [f for f in pending if now - future_start.get(f, now) > worker_timeout]
-                            for f in stuck:
-                                code = futures[f]
-                                elapsed = int(now - future_start.get(f, now))
-                                self.logger.error(f"拉取+计算 {code} 卡死({elapsed}s > {worker_timeout}s)，跳过")
-                                f.cancel()
-                                pending.discard(f)
-                                results[code] = (code, code, None)
-                                failed_kline_codes.add(code)
-                                done += 1
-                                consecutive_stuck += 1
-
-                            # 连续卡死数达到阈值，强制重启进程池
-                            if consecutive_stuck >= stuck_threshold:
-                                if restart_count < max_restarts:
-                                    restart_count += 1
-                                    self.logger.warning(
-                                        f"连续 {consecutive_stuck} 只卡死，强制重启进程池 "
-                                        f"(第 {restart_count}/{max_restarts} 次，剩余 {len(pending)} 个已提交任务将被丢弃)"
-                                    )
-                                    # 收集剩余已提交但未完成的股票
-                                    for f in list(pending):
-                                        c = futures.get(f)
-                                        if c:
-                                            failed_kline_codes.add(c)
-                                            results[c] = (c, c, None)
-                                            done += 1
-                                    pending.clear()
-
-                                    # 强制关闭旧进程池（杀掉卡死的 worker 进程）
-                                    try:
-                                        executor.shutdown(wait=False, cancel_futures=True)
-                                    except Exception:
-                                        pass
-
-                                    # 创建新进程池，继续处理未提交的股票
-                                    time.sleep(5)  # 等待 baostock 服务端冷却
-                                    submitted_codes.clear()  # 重置，让未完成的可以重新提交
-                                    executor = _create_executor()
-                                    consecutive_stuck = 0
-                                    unsubmitted = [c for c in remaining_codes if c not in results]
-                                    if unsubmitted:
-                                        new_futures = _submit_batch(executor, unsubmitted, workers * 2)
-                                        futures = new_futures
-                                        pending = set(futures.keys())
-                                        future_start = {f: time.time() for f in pending}
-                                else:
-                                    # 超过最大重启次数，放弃
-                                    self.logger.error(f"进程池已重启 {restart_count} 次仍连续卡死，放弃剩余任务")
-                                    for f in list(pending):
-                                        c = futures.get(f)
-                                        if c:
-                                            failed_kline_codes.add(c)
-                                            results[c] = (c, c, None)
-                                            done += 1
-                                    pending.clear()
-                                    pool_broken = True
-
-                        # 补充提交新任务（保持进程池满载）
-                        if not pool_broken and len(pending) < workers:
-                            unsubmitted = [c for c in remaining_codes if c not in submitted_codes and c not in results]
-                            if unsubmitted:
-                                new_batch = _submit_batch(executor, unsubmitted, workers - len(pending))
-                                futures.update(new_batch)
-                                pending.update(new_batch.keys())
-                                future_start.update({f: time.time() for f in new_batch})
-
-                    # 关闭进程池
+                def _handle_result(res, code):
+                    """处理单个结果（写文件/写库/更新极值等 I/O），返回是否应加入重试集"""
                     try:
-                        executor.shutdown(wait=False, cancel_futures=True)
-                    except Exception:
-                        pass
+                        self._process_compute_result(res)
+                    except Exception as e:
+                        self.logger.error(f"处理 {code} 流水线结果出错: {e}")
 
-                    # 末尾集中重试：针对失败/超时/卡死的股票再跑几轮（串行、可控）
-                    if failed_kline_codes:
-                        retry_rounds = 3
-                        self.logger.warning(
-                            f"流水线阶段失败/超时 {len(failed_kline_codes)} 只，开始末尾串行重试 {retry_rounds} 轮"
-                        )
-                        # 进程池崩溃后主进程的 baostock 连接可能已失效，强制重新登录
+                    should_retry = False
+                    if res.get('skip'):
+                        reason = res.get('reason', '')
+                        if reason in ('K线拉取失败', '超时', '已取消') or '卡死' in reason:
+                            should_retry = True
+
+                    df = res.get('df')
+                    if df is not None and hasattr(df, "empty") and not df.empty:
+                        name = res.get('stock_name') or code
+                        results[code] = (code, name, df.tail(1))
+                    else:
+                        results[code] = (code, res.get('stock_name') or code, None)
+
+                    return should_retry
+
+                start_time = time.time()
+                executor = _create_executor()
+                futures = _submit_batch(executor, remaining_codes, workers * 2)
+                pending = set(futures.keys())
+                future_start = {f: time.time() for f in pending}
+
+                while pending and not pool_broken:
+                    done_set, _ = wait(pending, timeout=poll_interval, return_when=FIRST_COMPLETED)
+                    if not done_set:
+                        elapsed_all = int(time.time() - start_time)
+                        self.logger.warning(f"等待中... {len(pending)} 只股票仍在处理，已用时 {elapsed_all}s")
+                        continue
+
+                    # 处理已完成的 future
+                    for future in done_set:
+                        pending.discard(future)
+                        code = futures[future]
                         try:
-                            logout_baostock()
-                        except Exception:
-                            pass
-                        login_baostock()
-                        self.logger.warning("串行重试前已重新登录 baostock")
-
-                        remaining = set(failed_kline_codes)
-                        for r in range(1, retry_rounds + 1):
-                            if not remaining:
+                            res = future.result(timeout=5)
+                        except CancelledError:
+                            res = {'stock_code': code, 'stock_name': code, 'skip': True, 'reason': '已取消'}
+                        except TimeoutError:
+                            self.logger.error(f"拉取+计算 {code} 超时")
+                            res = {'stock_code': code, 'stock_name': code, 'skip': True, 'reason': '超时'}
+                        except Exception as e:
+                            is_broken = isinstance(e, (BrokenProcessPool, BrokenPipeError))
+                            if not is_broken and isinstance(e, OSError) and "Broken pipe" in str(e):
+                                is_broken = True
+                            if is_broken:
+                                pool_broken = True
+                                pool_broken_reason = str(e)
+                                self.logger.error(f"进程池通信异常（流水线），将回退到串行流式。原因: {pool_broken_reason}")
+                                for f in list(pending):
+                                    f.cancel()
+                                pending.clear()
                                 break
-                            self.logger.warning(f"重试第 {r}/{retry_rounds} 轮，待重试 {len(remaining)} 只")
-                            if r > 1:
-                                time.sleep(min(2 * r, 8))
-                            next_remaining = set()
+                            self.logger.error(f"拉取+计算 {code} 出错: {e}")
+                            res = {'stock_code': code, 'stock_name': code, 'skip': True, 'reason': str(e)}
+
+                        consecutive_stuck = 0
+                        if _handle_result(res, code):
+                            failed_kline_codes.add(code)
+
+                        done += 1
+                        if done == 1 or done % 50 == 0 or done == total:
+                            self.logger.warning(f"已拉取+计算 {done}/{total} 只")
+
+                    # 检查卡死的 future
+                    if not pool_broken:
+                        now = time.time()
+                        stuck = [f for f in pending if now - future_start.get(f, now) > worker_timeout]
+                        for f in stuck:
+                            code = futures[f]
+                            elapsed = int(now - future_start.get(f, now))
+                            self.logger.error(f"拉取+计算 {code} 卡死({elapsed}s > {worker_timeout}s)，跳过")
+                            f.cancel()
+                            pending.discard(f)
+                            results[code] = (code, code, None)
+                            failed_kline_codes.add(code)
+                            done += 1
+                            consecutive_stuck += 1
+
+                        # 连续卡死数达到阈值，强制重启进程池
+                        if consecutive_stuck >= stuck_threshold:
+                            if restart_count < max_restarts:
+                                restart_count += 1
+                                self.logger.warning(
+                                    f"连续 {consecutive_stuck} 只卡死，强制重启进程池 "
+                                    f"(第 {restart_count}/{max_restarts} 次，剩余 {len(pending)} 个已提交任务将被丢弃)"
+                                )
+                                # 收集剩余已提交但未完成的股票
+                                for f in list(pending):
+                                    c = futures.get(f)
+                                    if c:
+                                        failed_kline_codes.add(c)
+                                        results[c] = (c, c, None)
+                                        done += 1
+                                pending.clear()
+
+                                # 强制关闭旧进程池（杀掉卡死的 worker 进程）
+                                try:
+                                    executor.shutdown(wait=False, cancel_futures=True)
+                                except Exception:
+                                    pass
+
+                                # 创建新进程池，继续处理未提交的股票
+                                time.sleep(5)  # 等待 baostock 服务端冷却
+                                submitted_codes.clear()  # 重置，让未完成的可以重新提交
+                                executor = _create_executor()
+                                consecutive_stuck = 0
+                                unsubmitted = [c for c in remaining_codes if c not in results]
+                                if unsubmitted:
+                                    new_futures = _submit_batch(executor, unsubmitted, workers * 2)
+                                    futures = new_futures
+                                    pending = set(futures.keys())
+                                    future_start = {f: time.time() for f in pending}
+                            else:
+                                # 超过最大重启次数，放弃
+                                self.logger.error(f"进程池已重启 {restart_count} 次仍连续卡死，放弃剩余任务")
+                                for f in list(pending):
+                                    c = futures.get(f)
+                                    if c:
+                                        failed_kline_codes.add(c)
+                                        results[c] = (c, c, None)
+                                        done += 1
+                                pending.clear()
+                                pool_broken = True
+
+                    # 补充提交新任务（保持进程池满载）
+                    if not pool_broken and len(pending) < workers:
+                        unsubmitted = [c for c in remaining_codes if c not in submitted_codes and c not in results]
+                        if unsubmitted:
+                            new_batch = _submit_batch(executor, unsubmitted, workers - len(pending))
+                            futures.update(new_batch)
+                            pending.update(new_batch.keys())
+                            future_start.update({f: time.time() for f in new_batch})
+
+                # 关闭进程池
+                try:
+                    executor.shutdown(wait=False, cancel_futures=True)
+                except Exception:
+                    pass
+
+                # 末尾集中重试：针对失败/超时/卡死的股票再跑几轮
+                if failed_kline_codes:
+                    retry_rounds = 3
+                    retry_parallel_threshold = 50  # 超过此数量使用多进程重试
+                    retry_workers = min(3, workers)  # 重试进程数，比正常阶段保守
+
+                    self.logger.warning(
+                        f"流水线阶段失败/超时 {len(failed_kline_codes)} 只，开始末尾重试 {retry_rounds} 轮"
+                    )
+                    remaining = set(failed_kline_codes)
+
+                    for r in range(1, retry_rounds + 1):
+                        if not remaining:
+                            break
+                        self.logger.warning(f"重试第 {r}/{retry_rounds} 轮，待重试 {len(remaining)} 只")
+                        if r > 1:
+                            time.sleep(min(2 * r, 8))
+                        next_remaining = set()
+                        use_parallel = len(remaining) > retry_parallel_threshold
+
+                        if use_parallel:
+                            # 多进程重试
+                            retry_executor = ProcessPoolExecutor(max_workers=retry_workers)
+                            try:
+                                retry_futures = {
+                                    retry_executor.submit(
+                                        fetch_and_compute_one_baostock_worker,
+                                        code,
+                                        self.start_date,
+                                        self.end_date,
+                                        INDICATORS_CONFIG,
+                                        SIGNAL_FILTERS,
+                                        self.current_time,
+                                        3,
+                                        self._list_name_by_code.get(code),
+                                    ): code
+                                    for code in remaining
+                                }
+                                retry_total = len(retry_futures)
+                                retry_done = 0
+                                done_futures = set()
+                                try:
+                                    for future in as_completed(retry_futures, timeout=300):
+                                        done_futures.add(future)
+                                        code = retry_futures[future]
+                                        retry_done += 1
+                                        try:
+                                            retry_res = future.result(timeout=5)
+                                        except Exception as e:
+                                            retry_res = {
+                                                'stock_code': code,
+                                                'stock_name': code,
+                                                'skip': True,
+                                                'reason': str(e),
+                                            }
+
+                                        try:
+                                            self._process_compute_result(retry_res)
+                                        except Exception as e:
+                                            self.logger.error(f"处理 {code} 重试结果出错: {e}")
+
+                                        df = retry_res.get('df')
+                                        if df is not None and hasattr(df, "empty") and not df.empty:
+                                            name = retry_res.get('stock_name') or code
+                                            results[code] = (code, name, df.tail(1))
+                                        else:
+                                            results[code] = (code, retry_res.get('stock_name') or code, None)
+
+                                        if retry_res.get('skip'):
+                                            next_remaining.add(code)
+
+                                        if retry_done == 1 or retry_done % 50 == 0 or retry_done == retry_total:
+                                            self.logger.warning(f"重试进度: {retry_done}/{retry_total} 只")
+                                except TimeoutError:
+                                    # 超时：未完成的 future 标记为失败，下轮继续重试
+                                    unfinished = set(retry_futures.keys()) - done_futures
+                                    self.logger.warning(f"并行重试超时，已完成 {retry_done}/{retry_total}，剩余 {len(unfinished)} 只未完成")
+                                    for f in unfinished:
+                                        c = retry_futures[f]
+                                        f.cancel()
+                                        results[c] = (c, c, None)
+                                        next_remaining.add(c)
+                            finally:
+                                retry_executor.shutdown(wait=False, cancel_futures=True)
+                        else:
+                            # 串行重试：重置登录状态，让 worker 重新登录
+                            import spiders.baostock_helper as _bh
+                            try:
+                                logout_baostock()
+                            except Exception:
+                                pass
+                            _bh._BAOSTOCK_LOGGED_IN = False
+                            self.logger.warning("串行重试前已重置 baostock 登录状态")
+                            retry_total = len(remaining)
+                            retry_done = 0
                             for retry_code in list(remaining):
-                                retry_timeout = 180  # 每只股票重试最大耗时（秒）
+                                retry_done += 1
+                                retry_timeout = 180
                                 try:
                                     def _alarm_handler(signum, frame):
                                         raise TimeoutError(f"重试 {retry_code} 超时({retry_timeout}s)")
@@ -881,253 +955,227 @@ class StockKlineSpider(scrapy.Spider):
                                 else:
                                     results[retry_code] = (retry_code, retry_res.get('stock_name') or retry_code, None)
 
-                                # 若仍失败，下轮继续重试
                                 if retry_res.get('skip'):
                                     next_remaining.add(retry_code)
-                            remaining = next_remaining
 
-                            if remaining:
-                                self.logger.error(f"K线拉取失败仍未恢复 {len(remaining)} 只（已重试 {retry_rounds} 轮）")
+                                if retry_done == 1 or retry_done % 50 == 0 or retry_done == retry_total:
+                                    self.logger.warning(f"重试进度: {retry_done}/{retry_total} 只")
 
-                        if pool_broken:
-                            raise BrokenProcessPool(pool_broken_reason or "process pool broken")
-                except BrokenProcessPool as e:
-                    # 回退到串行流式（稳定优先）
-                    self.logger.warning(f"流水线并行失败，回退串行流式: {e}")
-                    # 强制重新登录 baostock，避免使用进程池遗留的失效连接
-                    try:
-                        logout_baostock()
-                    except Exception:
-                        pass
-                    login_baostock()
-                    self.logger.warning("串行流式前已重新登录 baostock")
-                    results = {}
-                    done = 0
-                    for code in self.stock_codes:
-                        try:
-                            res = fetch_and_compute_one_baostock_worker(
-                                code,
-                                self.start_date,
-                                self.end_date,
-                                INDICATORS_CONFIG,
-                                SIGNAL_FILTERS,
-                                self.current_time,
-                                3,
-                                self._list_name_by_code.get(code),
-                            )
-                        except Exception as e2:
-                            self.logger.error(f"串行流式 拉取+计算 {code} 出错: {e2}")
-                            res = {'stock_code': code, 'stock_name': code, 'skip': True, 'reason': str(e2)}
+                        remaining = next_remaining
+                        if remaining:
+                            self.logger.error(f"K线拉取失败仍未恢复 {len(remaining)} 只（已重试 {r}/{retry_rounds} 轮）")
 
-                        self._process_compute_result(res)
-                        df = res.get('df')
-                        if df is not None and hasattr(df, "empty") and not df.empty:
-                            results[code] = (code, res.get('stock_name') or code, df.tail(1))
-                        else:
-                            results[code] = (code, res.get('stock_name') or code, None)
-
-                        done += 1
-                        if done == 1 or done % 50 == 0 or done == total:
-                            self.logger.warning(f"已拉取+计算 {done}/{total} 只")
-
-                self._export_valuation_csv(results)
-                return
-            try:
-                with ProcessPoolExecutor(max_workers=workers) as executor:
-                    futures = {
-                        executor.submit(
-                            fetch_one_baostock_worker,
-                            code,
-                            self.start_date,
-                            self.end_date,
-                            5,
-                            self._list_name_by_code.get(code),
-                        ): code
-                        for code in self.stock_codes
-                    }
-                    pool_broken = False
-                    pool_broken_reason = None
-                    for future in as_completed(futures):
-                        code = futures[future]
-                        try:
-                            results[code] = future.result(timeout=120)
-                            if pool_broken:
-                                # If pool already detected broken, still consume results quietly.
-                                pass
-                        except TimeoutError:
-                            self.logger.error(f"拉取 {code} 超时(120s)，跳过")
-                            results[code] = (code, None, None)
-                        except Exception as e:
-                            # If the process pool is broken (worker crash / IPC pipe broken),
-                            # continuing to wait will produce大量重复错误。检测到后立刻回退串行。
-                            is_broken = isinstance(e, (BrokenProcessPool, BrokenPipeError))
-                            if not is_broken:
-                                # Some platforms wrap as OSError: [Errno 32] Broken pipe
-                                if isinstance(e, OSError) and "Broken pipe" in str(e):
-                                    is_broken = True
-                            if is_broken and not pool_broken:
-                                pool_broken = True
-                                pool_broken_reason = str(e)
-                                self.logger.error(
-                                    f"进程池通信异常（可能并发过高或子进程崩溃），将回退串行拉取。原因: {pool_broken_reason}"
-                                )
-                                # Cancel remaining tasks best-effort to stop error spam.
-                                for f in futures.keys():
-                                    if not f.done():
-                                        f.cancel()
-                                # Break out: executor will exit context and we fallback below.
-                                break
-                            # Non-fatal per-stock error: keep going but avoid刷屏
-                            self.logger.error(f"拉取 {code} 出错: {e}")
-                            results[code] = (code, None, None)
-                        done += 1
-                        if done == 1 or done % 50 == 0 or done == total:
-                            self.logger.warning(f"已拉取 {done}/{total} 只")
                     if pool_broken:
                         raise BrokenProcessPool(pool_broken_reason or "process pool broken")
-            except PermissionError as e:
-                self.logger.warning(f"进程池不可用，改为串行拉取: {e}")
-                results = {}
-                done = 0
-                for code in self.stock_codes:
-                    try:
-                        results[code] = fetch_one_baostock_worker(
-                            code,
-                            self.start_date,
-                            self.end_date,
-                            5,
-                            self._list_name_by_code.get(code),
-                        )
-                    except Exception as e2:
-                        self.logger.error(f"拉取 {code} 出错: {e2}")
-                        results[code] = (code, None, None)
-                    done += 1
-                    if done == 1 or done % 50 == 0 or done == total:
-                        self.logger.warning(f"已拉取 {done}/{total} 只")
             except BrokenProcessPool as e:
-                self.logger.warning(f"并行拉取失败，改为串行拉取: {e}")
+                # 回退到串行流式（稳定优先）
+                self.logger.warning(f"流水线并行失败，回退串行流式: {e}")
+                # 重置登录状态，让 worker 内部重新登录
+                import spiders.baostock_helper as _bh
+                try:
+                    logout_baostock()
+                except Exception:
+                    pass
+                _bh._BAOSTOCK_LOGGED_IN = False
+                self.logger.warning("串行流式回退前已重置 baostock 登录状态")
                 results = {}
                 done = 0
                 for code in self.stock_codes:
                     try:
-                        results[code] = fetch_one_baostock_worker(
+                        res = fetch_and_compute_one_baostock_worker(
                             code,
                             self.start_date,
                             self.end_date,
-                            5,
+                            INDICATORS_CONFIG,
+                            SIGNAL_FILTERS,
+                            self.current_time,
+                            3,
                             self._list_name_by_code.get(code),
                         )
                     except Exception as e2:
-                        self.logger.error(f"拉取 {code} 出错(串行): {e2}")
-                        results[code] = (code, None, None)
+                        self.logger.error(f"串行流式 拉取+计算 {code} 出错: {e2}")
+                        res = {'stock_code': code, 'stock_name': code, 'skip': True, 'reason': str(e2)}
+
+                    self._process_compute_result(res)
+                    df = res.get('df')
+                    if df is not None and hasattr(df, "empty") and not df.empty:
+                        results[code] = (code, res.get('stock_name') or code, df.tail(1))
+                    else:
+                        results[code] = (code, res.get('stock_name') or code, None)
+
                     done += 1
                     if done == 1 or done % 50 == 0 or done == total:
-                        self.logger.warning(f"已拉取 {done}/{total} 只")
+                        self.logger.warning(f"已拉取+计算 {done}/{total} 只")
 
-            # 并行计算信号（CPU 密集型，与网络无关）
-            from .stock_config import PROCESS_KLINE_WORKERS
-            from .signal_compute_worker import compute_signals_for_stock
-            kline_workers = int(PROCESS_KLINE_WORKERS) if PROCESS_KLINE_WORKERS else 0
-
-            valid_items = []
-            for code in self.stock_codes:
-                if code not in results:
-                    continue
-                s_code, s_name, s_df = results[code]
-                if s_df is not None and not s_df.empty:
-                    valid_items.append((s_code, s_name, s_df))
-
-            if kline_workers > 0 and len(valid_items) > 1:
-                self.logger.warning(
-                    f"开始并行计算 {len(valid_items)} 只股票的信号，{kline_workers} 进程"
-                )
-                compute_results = {}
-                compute_done = 0
-                try:
-                    with ProcessPoolExecutor(max_workers=kline_workers) as compute_executor:
-                        compute_futures = {
-                            compute_executor.submit(
-                                compute_signals_for_stock,
-                                s_code, s_name, s_df,
-                                INDICATORS_CONFIG, SIGNAL_FILTERS, self.current_time,
-                            ): s_code
-                            for s_code, s_name, s_df in valid_items
-                        }
-                        for future in as_completed(compute_futures):
-                            code = compute_futures[future]
-                            try:
-                                compute_results[code] = future.result(timeout=60)
-                            except TimeoutError:
-                                self.logger.error(f"计算 {code} 信号超时(60s)，跳过")
-                                compute_results[code] = {
-                                    'stock_code': code,
-                                    'stock_name': code,
-                                    'skip': True,
-                                    'reason': '计算超时',
-                                }
-                            except Exception as e:
-                                self.logger.error(f"计算 {code} 信号出错: {e}")
-                                compute_results[code] = {
-                                    'stock_code': code,
-                                    'stock_name': code,
-                                    'skip': False,
-                                    'error': str(e),
-                                }
-                            compute_done += 1
-                            if compute_done == 1 or compute_done % 200 == 0 or compute_done == len(valid_items):
-                                self.logger.warning(f"已计算 {compute_done}/{len(valid_items)} 只")
-                except Exception as e:
-                    self.logger.error(f"并行信号计算异常，回退到串行: {e}")
-                    compute_results = None
-
-                if compute_results is not None:
-                    for s_code, s_name, _ in valid_items:
-                        res = compute_results.get(s_code)
-                        if res is None:
-                            continue
-                        self._process_compute_result(res)
-                    return
-                # 并行失败，回退到串行
-
-            self.logger.warning(f"串行处理 {len(valid_items)} 只股票的信号")
-            for count, (s_code, s_name, s_df) in enumerate(valid_items, 1):
-                if count == 1 or count % 50 == 0 or count == len(valid_items):
-                    self.logger.warning(f"开始处理第{count}个股票 {s_code} 的数据")
-                self.process_kline_data(s_code, s_name, s_df)
-
-            # 从 K 线结果中提取估值写入 CSV（替代独立的估值抓取阶段）
             self._export_valuation_csv(results)
             return
+        try:
+            with ProcessPoolExecutor(max_workers=workers) as executor:
+                futures = {
+                    executor.submit(
+                        fetch_one_baostock_worker,
+                        code,
+                        self.start_date,
+                        self.end_date,
+                        5,
+                        self._list_name_by_code.get(code),
+                    ): code
+                    for code in self.stock_codes
+                }
+                pool_broken = False
+                pool_broken_reason = None
+                for future in as_completed(futures):
+                    code = futures[future]
+                    try:
+                        results[code] = future.result(timeout=120)
+                        if pool_broken:
+                            # If pool already detected broken, still consume results quietly.
+                            pass
+                    except TimeoutError:
+                        self.logger.error(f"拉取 {code} 超时(120s)，跳过")
+                        results[code] = (code, None, None)
+                    except Exception as e:
+                        # If the process pool is broken (worker crash / IPC pipe broken),
+                        # continuing to wait will produce大量重复错误。检测到后立刻回退串行。
+                        is_broken = isinstance(e, (BrokenProcessPool, BrokenPipeError))
+                        if not is_broken:
+                            # Some platforms wrap as OSError: [Errno 32] Broken pipe
+                            if isinstance(e, OSError) and "Broken pipe" in str(e):
+                                is_broken = True
+                        if is_broken and not pool_broken:
+                            pool_broken = True
+                            pool_broken_reason = str(e)
+                            self.logger.error(
+                                f"进程池通信异常（可能并发过高或子进程崩溃），将回退串行拉取。原因: {pool_broken_reason}"
+                            )
+                            # Cancel remaining tasks best-effort to stop error spam.
+                            for f in futures.keys():
+                                if not f.done():
+                                    f.cancel()
+                            # Break out: executor will exit context and we fallback below.
+                            break
+                        # Non-fatal per-stock error: keep going but avoid刷屏
+                        self.logger.error(f"拉取 {code} 出错: {e}")
+                        results[code] = (code, None, None)
+                    done += 1
+                    if done == 1 or done % 50 == 0 or done == total:
+                        self.logger.warning(f"已拉取 {done}/{total} 只")
+                if pool_broken:
+                    raise BrokenProcessPool(pool_broken_reason or "process pool broken")
+        except PermissionError as e:
+            self.logger.warning(f"进程池不可用，改为串行拉取: {e}")
+            results = {}
+            done = 0
+            for code in self.stock_codes:
+                try:
+                    results[code] = fetch_one_baostock_worker(
+                        code,
+                        self.start_date,
+                        self.end_date,
+                        5,
+                        self._list_name_by_code.get(code),
+                    )
+                except Exception as e2:
+                    self.logger.error(f"拉取 {code} 出错: {e2}")
+                    results[code] = (code, None, None)
+                done += 1
+                if done == 1 or done % 50 == 0 or done == total:
+                    self.logger.warning(f"已拉取 {done}/{total} 只")
+        except BrokenProcessPool as e:
+            self.logger.warning(f"并行拉取失败，改为串行拉取: {e}")
+            results = {}
+            done = 0
+            for code in self.stock_codes:
+                try:
+                    results[code] = fetch_one_baostock_worker(
+                        code,
+                        self.start_date,
+                        self.end_date,
+                        5,
+                        self._list_name_by_code.get(code),
+                    )
+                except Exception as e2:
+                    self.logger.error(f"拉取 {code} 出错(串行): {e2}")
+                    results[code] = (code, None, None)
+                done += 1
+                if done == 1 or done % 50 == 0 or done == total:
+                    self.logger.warning(f"已拉取 {done}/{total} 只")
 
-        # 非 baostock：原有逐只请求逻辑（东方财富等）
-        # 东方财富 API（Scrapy Request 机制）
-        count = 0
-        for stock_code in self.stock_codes:
-            count += 1
-            self.logger.warning(f"开始请求第{count}个股票 {stock_code} 的数据")
-            prefix = STOCK_PREFIX_MAP.get(stock_code[:2])
-            if not prefix:
-                self.logger.error(f"不支持的股票代码前缀: {stock_code}")
+        # 并行计算信号（CPU 密集型，与网络无关）
+        from .stock_config import PROCESS_KLINE_WORKERS
+        from .signal_compute_worker import compute_signals_for_stock
+        kline_workers = int(PROCESS_KLINE_WORKERS) if PROCESS_KLINE_WORKERS else 0
+
+        valid_items = []
+        for code in self.stock_codes:
+            if code not in results:
                 continue
-            params = {
-                'secid': f"{prefix}.{stock_code[2:]}",
-                'fields1': 'f1,f2,f3,f4,f5,f6,f7,f8,f9,f10,f11,f12,f13',
-                'fields2': 'f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61',
-                'klt': KLINE_API['klt'][self.kline_type],
-                'fqt': KLINE_API['fqt'][self.fq_type],
-                'ut': KLINE_API['ut'],
-                'beg': self.start_date or '',
-                'end': self.end_date or '',
-                'lmt': '1000',
-            }
-            url = f"{KLINE_API['base_url']}?" + "&".join([f"{k}={v}" for k, v in params.items()])
-            yield scrapy.Request(
-                url,
-                callback=self.parse,
-                meta={'stock_code': stock_code},
-                headers=HEADERS
+            s_code, s_name, s_df = results[code]
+            if s_df is not None and not s_df.empty:
+                valid_items.append((s_code, s_name, s_df))
+
+        if kline_workers > 0 and len(valid_items) > 1:
+            self.logger.warning(
+                f"开始并行计算 {len(valid_items)} 只股票的信号，{kline_workers} 进程"
             )
-    
+            compute_results = {}
+            compute_done = 0
+            try:
+                with ProcessPoolExecutor(max_workers=kline_workers) as compute_executor:
+                    compute_futures = {
+                        compute_executor.submit(
+                            compute_signals_for_stock,
+                            s_code, s_name, s_df,
+                            INDICATORS_CONFIG, SIGNAL_FILTERS, self.current_time,
+                        ): s_code
+                        for s_code, s_name, s_df in valid_items
+                    }
+                    for future in as_completed(compute_futures):
+                        code = compute_futures[future]
+                        try:
+                            compute_results[code] = future.result(timeout=60)
+                        except TimeoutError:
+                            self.logger.error(f"计算 {code} 信号超时(60s)，跳过")
+                            compute_results[code] = {
+                                'stock_code': code,
+                                'stock_name': code,
+                                'skip': True,
+                                'reason': '计算超时',
+                            }
+                        except Exception as e:
+                            self.logger.error(f"计算 {code} 信号出错: {e}")
+                            compute_results[code] = {
+                                'stock_code': code,
+                                'stock_name': code,
+                                'skip': False,
+                                'error': str(e),
+                            }
+                        compute_done += 1
+                        if compute_done == 1 or compute_done % 200 == 0 or compute_done == len(valid_items):
+                            self.logger.warning(f"已计算 {compute_done}/{len(valid_items)} 只")
+            except Exception as e:
+                self.logger.error(f"并行信号计算异常，回退到串行: {e}")
+                compute_results = None
+
+            if compute_results is not None:
+                for s_code, s_name, _ in valid_items:
+                    res = compute_results.get(s_code)
+                    if res is None:
+                        continue
+                    self._process_compute_result(res)
+                return
+            # 并行失败，回退到串行
+
+        self.logger.warning(f"串行处理 {len(valid_items)} 只股票的信号")
+        for count, (s_code, s_name, s_df) in enumerate(valid_items, 1):
+            if count == 1 or count % 50 == 0 or count == len(valid_items):
+                self.logger.warning(f"开始处理第{count}个股票 {s_code} 的数据")
+            self.process_kline_data(s_code, s_name, s_df)
+
+        # 从 K 线结果中提取估值写入 CSV（替代独立的估值抓取阶段）
+        self._export_valuation_csv(results)
+        return
+
     def write_to_signal_file(self, content):
         """将内容写入信号文件（带股票级去重，防止并发或重试导致重复）"""
         if not hasattr(self, '_written_signal_stocks'):
@@ -1232,223 +1280,6 @@ class StockKlineSpider(scrapy.Spider):
             self.logger.error(f"▲ 保存到数据库时出错: {str(e)}")
             self.conn.rollback()  # 发生错误时回滚事务
     
-    def parse(self, response):
-        try:
-            data = json.loads(response.text)
-            if data.get('data') and data['data'].get('klines'):
-                stock_code = response.meta['stock_code']
-                klines = data['data']['klines']
-                                
-                # 检查数据量是否足够
-                if len(klines) < 16:
-                    self.logger.warning(f"票 {stock_code} 的数据量不足16天，跳过分析")
-                    return
-                
-                # 将K线数据转换为DataFrame
-                kline_data = []
-                for kline in klines:
-                    values = kline.split(',')
-                    item = {}
-                    for i, value in enumerate(values):
-                        field = KLINE_FIELD_MAPPING.get(i)
-                        if field:
-                            if field != 'date':
-                                try:
-                                    item[field] = float(value)
-                                except ValueError:
-                                    item[field] = None
-                            else:
-                                item[field] = value
-                    kline_data.append(item)
-                
-                # 创建DataFrame
-                df = pd.DataFrame(kline_data)
-                df.set_index('date', inplace=True)
-                
-                last_close_price = df.iloc[-1]['close']  # 最近的收盘价
-                self.logger.info(f"最近一天的日期: {df.iloc[-1].name}, 收盘价: {last_close_price}")
-
-                # 算技术指标
-                if self.calc_indicators:
-                    df = TechnicalIndicators.calculate_all(df, INDICATORS_CONFIG)
-                    
-                    # 分析信号
-                    kdj_analysis = self.analyze_signals(df, stock_code=stock_code)
-                    
-                    # 只要有满足条件的信号写入文件
-                    if kdj_analysis['recent_signals']:
-                        # 统计信号种类和数量
-                        signal_type_count = {}
-                        for signal in kdj_analysis['recent_signals']:
-                            signal_type = signal['signal']
-                            signal_type_count[signal_type] = signal_type_count.get(signal_type, 0) + 1
-                        
-                        # 最近3天至少 N 种不同信号类型才输出（可调 signal_output.min_distinct_signal_types）
-                        if len(signal_type_count) >= _min_distinct_signal_types_for_output():
-                            # 写入文件
-                            self.write_to_signal_file(f"\n股票 {data['data']['name']}({stock_code}) 股票信号分析结果")
-                            self.write_to_signal_file(f"总体成功率: {kdj_analysis['overall_success_rate']:.2f}%")
-                            self.write_to_signal_file(f"总信号数: {kdj_analysis['total_signals']}")
-                            self.write_to_signal_file(f"总成功数: {kdj_analysis['total_success']}")
-                            vh, _vhd = self._compute_volume_heat_score(df)
-                            heat_line = self._recent_trade_heat_line(vh)
-                            if heat_line:
-                                self.write_to_signal_file(heat_line)
-                            
-                            # 输出最近信号
-                            self.write_to_signal_file("\n最近3天出现的高胜率信号：")
-                            self.write_to_signal_file(f"共有{len(kdj_analysis['recent_signals'])}个信号，{len(signal_type_count)}种类型：")
-                            # 输出每种信号的数量
-                            for signal_type, count in signal_type_count.items():
-                                self.write_to_signal_file(f"- {signal_type}: {count}个")
-                            
-                            # 批量处理数据库插入
-                            signals_to_insert = []
-                            for signal in kdj_analysis['recent_signals']:
-                                signals_to_insert.append((
-                                    stock_code,
-                                    data['data']['name'],
-                                    signal['date'].strftime("%Y-%m-%d"),
-                                    signal['signal'],
-                                    round(signal['signal_success_rate'], 2),
-                                    round(signal['close'], 2),
-                                    self.current_time
-                                ))
-
-                            if signals_to_insert:
-                                # 使用executemany一次性插入多条记录（带唯一约束与 OR IGNORE，重复不会插入）
-                                self.cursor.executemany('''
-                                    INSERT OR IGNORE INTO stock_data (
-                                        stock_code, stock_name, date, signal, 
-                                        success_rate, initial_price, created_at
-                                    )
-                                    VALUES (?, ?, ?, ?, ?, ?, ?)
-                                ''', signals_to_insert)
-                                self.conn.commit()
-                            
-                            # 为保证同一股票在同一天只有一条汇总记录，
-                            # 在插入当日 stock_signals 之前，先删除同一股票、同一 insert_date 的旧记录
-                            self.cursor.execute('''
-                                DELETE FROM stock_signals
-                                WHERE stock_code = ? AND insert_date = ?
-                            ''', (stock_code, self.current_time))
-                            
-                            heat_score_val = round(vh, 1) if vh is not None else None
-                            self.cursor.execute('''
-                                INSERT INTO stock_signals (
-                                    stock_code, stock_name, signal, signal_count,
-                                    overall_success_rate, insert_date, insert_price,
-                                    created_at, trade_heat_score
-                                )
-                                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                            ''', (
-                                stock_code,
-                                data['data']['name'],
-                                ','.join(signal_type_count.keys()),
-                                len(signal_type_count),
-                                round(kdj_analysis['overall_success_rate'], 2),
-                                self.current_time,
-                                round(last_close_price, 2),
-                                self.current_time,
-                                heat_score_val,
-                            ))
-                            
-                            # 输出信号到文件
-                            for signal in kdj_analysis['recent_signals']:
-                                # 输出信号相关信息
-                                if signal:
-                                    signal_info = []
-                                    
-                                    # 基础信息
-                                    signal_info.extend([
-                                        f"日期: {signal['date'].strftime('%Y-%m-%d')}",
-                                        f"信号类型: {signal['signal_type']}",
-                                        f"信号: {signal['signal']}",
-                                        f"信号胜率: {signal['signal_success_rate']:.2f}%",
-                                        f"(历史出现: {signal['signal_total']}次)",
-                                        f"整体胜率: {signal['overall_success_rate']:.2f}%",
-                                        f"收盘价: {signal['close']:.2f}"
-                                    ])
-                                    
-                                    # 根据信号类型添加对应的指标信息
-                                    if signal['signal_type'].startswith('kdj'):
-                                        signal_info.extend([
-                                            f"K值: {signal.get('k_value', 'N/A'):.2f}",
-                                            f"D值: {signal.get('d_value', 'N/A'):.2f}",
-                                            f"J值: {signal.get('j_value', 'N/A'):.2f}"
-                                        ])
-                                    elif signal['signal_type'].startswith('macd'):
-                                        signal_info.extend([
-                                            f"MACD: {signal.get('macd', 'N/A'):.4f}",
-                                            f"MACD信号: {signal.get('macd_signal', 'N/A'):.4f}"
-                                        ])
-                                    elif signal['signal_type'].startswith('rsi'):
-                                        signal_info.extend([
-                                            f"RSI(6): {signal.get('RSI_6', 'N/A'):.2f}",
-                                            f"RSI(12): {signal.get('RSI_12', 'N/A'):.2f}"
-                                        ])
-                                    elif signal['signal_type'].startswith('boll'):
-                                        signal_info.extend([
-                                            f"布林下轨: {signal.get('BBL_20_2.0', 'N/A'):.2f}",
-                                            f"布林中轨: {signal.get('BBM_20_2.0', 'N/A'):.2f}",
-                                            f"布林上轨: {signal.get('BBU_20_2.0', 'N/A'):.2f}"
-                                        ])
-                                    elif signal['signal_type'].startswith('ma'):
-                                        signal_info.extend([
-                                            f"MA5: {signal.get('SMA_5', 'N/A'):.2f}",
-                                            f"MA20: {signal.get('SMA_20', 'N/A'):.2f}"
-                                        ])
-                                    elif signal['signal_type'].startswith('dmi'):
-                                        signal_info.extend([
-                                            f"DMP(14): {signal.get('DMP_14', 'N/A'):.2f}",
-                                            f"DMN(14): {signal.get('DMN_14', 'N/A'):.2f}",
-                                            f"ADX(14): {signal.get('ADX_14', 'N/A'):.2f}"
-                                        ])
-                                    elif signal['signal_type'].startswith('cci'):
-                                        signal_info.extend([
-                                            f"CCI(20): {signal.get('CCI_20', 'N/A'):.2f}"
-                                        ])
-                                    elif signal['signal_type'].startswith('roc'):
-                                        signal_info.extend([
-                                            f"ROC(12): {signal.get('ROC_12', 'N/A'):.2f}"
-                                        ])
-                                    
-                                    # 将所有信息用逗号连接并输出
-                                    signal_info_str = ", ".join(signal_info)
-                                    self.logger.info(signal_info_str)
-                                    # 同时写入信号文件
-                                    self.write_to_signal_file(f"股票: {data['data']['name']}({stock_code}), {signal_info_str}")
-                            self.write_to_signal_file("-" * 80)  # 分隔线
-                            
-                            # 同时保持控制台输出
-                            self.logger.warning(f"股票 {stock_code} KDJ信号分析结果已写入文件: {self.signal_file}")
-                        else:
-                            self.logger.warning(f"股票 {stock_code} 最近3天的信号类型数量 {len(signal_type_count)}，跳过输出")
-                    else:
-                        self.logger.info(f"股票 {stock_code} 最近3天没有满足条件的高胜信号")
-                
-                # 结果数据
-                for index, row in df.iterrows():
-                    item = dict(row)
-                    item.update({
-                        'stock_code': stock_code,
-                        'date': index,
-                        'type': self.kline_type,
-                        'fq_type': self.fq_type
-                    })
-                    
-                    # print(f"获取到K线数据: {stock_code} - {index}")
-                    yield item
-                    
-            else:
-                self.logger.error(f"未获取到股票 {response.meta['stock_code']} 的K线数据")
-                
-        except Exception as e:
-            error_msg = f"解析股票 {response.meta['stock_code']} 的K线数据出错: {str(e)}"
-            self.logger.error(error_msg)
-            import traceback
-            return  # 出现异常时直接返回，不继续执行
-        
     def _process_compute_result(self, res):
         """处理 compute_signals_for_stock 返回的结果（主进程 I/O）。"""
         stock_code = res['stock_code']
@@ -2311,7 +2142,7 @@ class StockKlineSpider(scrapy.Spider):
             'recent_signals': recent_signals
         }
     
-    def close(self, reason):
+    def cleanup(self):
         """关闭数据库连接，并打印信号分析报告摘要"""
         # 打印信号分析报告摘要到日志
         try:

@@ -1,7 +1,3 @@
-from scrapy.crawler import CrawlerProcess
-from scrapy.utils.project import get_project_settings
-from spiders.get_stock_list import StockListSpider
-from scrapy import cmdline
 from datetime import datetime, timedelta
 import os
 import sys
@@ -48,9 +44,9 @@ def is_stock_list_cache_valid(stock_file=STOCK_LIST_FILE, cache_days=STOCK_LIST_
 def run_stock_list_spider(force=False, log_file=None):
     """
     获取股票列表（带缓存）
-    
-    使用 subprocess 运行，避免 Twisted reactor 只能启动一次的问题
-    
+
+    优先使用 baostock 获取，失败时返回 False。
+
     Args:
         force: 是否强制刷新，忽略缓存
         log_file: 日志文件路径
@@ -85,44 +81,10 @@ def run_stock_list_spider(force=False, log_file=None):
                         f.write(f"{code}\n")
             log(f"[INFO] 股票列表获取完成（baostock），共 {len(entries)} 只")
             return True
-        log(f"[WARNING] baostock 返回空列表（可能为非交易日），尝试聚合接口...")
+        log(f"[WARNING] baostock 返回空列表（可能为非交易日）")
     except Exception as e:
-        log(f"[WARNING] baostock 获取股票列表失败: {e}，尝试聚合接口...", also_print=False)
-    
-    # 回退：使用聚合数据接口（子进程 Scrapy）
-    log(f"[INFO] 开始使用聚合接口获取股票列表（子进程）...")
-    try:
-        result = subprocess.run(
-            [sys.executable, '-c', '''
-import sys
-sys.path.insert(0, "{script_dir}")
-from scrapy.crawler import CrawlerProcess
-from scrapy.utils.project import get_project_settings
-from spiders.get_stock_list import StockListSpider
-
-settings = get_project_settings()
-settings.set('REQUEST_FINGERPRINTER_IMPLEMENTATION', '2.7')
-process = CrawlerProcess(settings)
-process.crawl(StockListSpider, api_key='8371893ed4ab2b2f75b59c7fa26bf2fe')
-process.start()
-'''.format(script_dir=script_dir)],
-            cwd=project_root,
-            capture_output=True,
-            text=True,
-            encoding='utf-8'
-        )
-        if result.returncode == 0:
-            log(f"[INFO] 股票列表获取完成（聚合接口）")
-            return True
-        log(f"[WARNING] 股票列表获取失败 (exit code {result.returncode})")
-        if result.stderr:
-            log(f"[WARNING] 错误输出: {result.stderr}", also_print=False)
-        return False
-    except Exception as e:
-        log(f"[ERROR] 获取股票列表时发生异常: {e}")
-        import traceback
-        log(f"[ERROR] 错误详情:\n{traceback.format_exc()}", also_print=False)
-        return False
+        log(f"[WARNING] baostock 获取股票列表失败: {e}", also_print=False)
+    return False
 
 def is_stock_detail_cache_valid(detail_file=STOCK_DETAIL_FILE, cache_days=STOCK_DETAIL_CACHE_DAYS):
     """
@@ -301,47 +263,30 @@ def run_stock_detail_spider(stock_file_path, log_file=None, target_date=None):
 def run_stock_kline_spider_with_indicators(stock_codes, target_date=None, stock_file_path=None):
     """
     获取带技术指标的K线数据
-    
+
     Args:
         stock_codes: 股票代码
         target_date: 目标日期，格式 YYYYMMDD，如果为None则使用今天
+        stock_file_path: 股票列表文件路径
     """
+    from spiders.stock_kline import StockKlineSpider
+
+    kwargs = dict(
+        use_file='true',
+        stock_codes=stock_codes,
+        calc_indicators=True,
+    )
     if target_date:
-        # 指定日期时使用 CrawlerProcess
-        settings = get_project_settings()
-        settings.set('REQUEST_FINGERPRINTER_IMPLEMENTATION', '2.7')
-        process = CrawlerProcess(settings)
-        crawl_kwargs = dict(
-            use_file='true',
-            stock_codes=stock_codes,
-            start_date=target_date,
-            end_date=target_date,
-            calc_indicators='true'
-        )
-        if stock_file_path:
-            crawl_kwargs['stock_file'] = stock_file_path
-        process.crawl('stock_kline', **crawl_kwargs)
-        process.start()
-    else:
-        # 默认今天，使用 cmdline
-        cmd = f'scrapy crawl stock_kline -a use_file=true -a stock_codes={stock_codes} -a calc_indicators=true'
-        if stock_file_path:
-            cmd += f' -a stock_file={stock_file_path}'
-        cmdline.execute(cmd.split())
+        kwargs['start_date'] = target_date
+        kwargs['end_date'] = target_date
+    if stock_file_path:
+        kwargs['stock_file'] = stock_file_path
 
-# def run_stock_kline_spider_with_yesterday(stock_codes):
-#     """获取昨天的K线数据"""
-#     yesterday = (datetime.now() - timedelta(days=1)).strftime('%Y%m%d')
-#     cmdline.execute(f'scrapy crawl stock_kline -a use_file=true -a stock_codes={stock_codes} -a start_date={yesterday} -a end_date={yesterday} -a calc_indicators=true'.split())
-
-def run_stock_kline_spider_with_yesterday(stock_codes):
-    """获取昨天的K线数据（已废弃，请使用 run_stock_kline_spider_with_indicators 并指定日期）"""
-    yesterday = (datetime.now() - timedelta(days=1)).strftime('%Y%m%d')
-    run_stock_kline_spider_with_indicators(stock_codes, target_date=yesterday)
-    
-def run_stock_kline_spider_without_indicators(stock_codes='sh603288'):
-    """获取不带技术指标的K线数据"""
-    cmdline.execute(f'scrapy crawl stock_kline -a stock_codes={stock_codes} -a calc_indicators=false'.split())
+    spider = StockKlineSpider(**kwargs)
+    try:
+        spider.run()
+    finally:
+        spider.cleanup()
 
 def upload_daily_report_to_cloudbase(report_date=None, log_file=None):
     """
@@ -696,7 +641,7 @@ if __name__ == "__main__":
     except Exception:
         pass
 
-    # Scrapy / scrapy.cfg 依赖「当前目录为项目根」；launchd 的 WorkingDirectory 若受限，此处兜底
+    # 工作目录需为项目根；launchd 的 WorkingDirectory 若受限，此处兜底
     _project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     try:
         os.chdir(_project_root)
@@ -800,7 +745,6 @@ if __name__ == "__main__":
             run_stock_kline_spider_with_indicators(STOCK_CODES, stock_file_path=stock_file_path)
         log_to_file(log_file, "[STEP 2] 爬虫任务执行完成（正常退出）")
     except SystemExit as e:
-        # cmdline.execute 可能会调用 sys.exit()，这是正常的
         log_to_file(log_file, f"[STEP 2] 爬虫任务执行完成（SystemExit，退出码: {e.code if hasattr(e, 'code') else 'N/A'}）")
     except Exception as e:
         log_to_file(log_file, f"[STEP 2] [ERROR] 爬虫任务执行出错: {e}", also_print=False)

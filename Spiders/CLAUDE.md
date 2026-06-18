@@ -4,25 +4,23 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Chinese A-share stock signal analysis system. Scrapes market data via baostock/EastMoney APIs, computes 13 technical indicators (KDJ, MACD, RSI, Bollinger, MA, etc.), detects 18 buy/sell signal types across 8 indicator families, filters by liquidity/valuation/quality gates, and presents results via a Flask web dashboard.
+Chinese A-share stock signal analysis system. Fetches market data via baostock API, computes 13 technical indicators (KDJ, MACD, RSI, Bollinger, MA, etc.), detects 18 buy/sell signal types across 8 indicator families, filters by liquidity/valuation/quality gates, and presents results via a Flask web dashboard.
 
-**Language:** Python 3 | **Frameworks:** Scrapy, baostock, pandas, ta, Flask | **DB:** SQLite
+**Language:** Python 3 | **Frameworks:** baostock, pandas, ta, Flask | **DB:** SQLite
 
 ## Repository Layout
 
 The git root is `/Users/dingli/Documents/UGit/Spiders/` (one level up from `Spiders/`).
 
 ```
-Spiders/                          # Scrapy project package
+Spiders/                          # Main package
   run.py                          # MAIN ENTRY POINT - orchestrates full pipeline
   spiders/
-    stock_kline.py                # Core spider (2157 lines) - data fetching + analysis
+    stock_kline.py                # Core class (StockKlineSpider) - data fetching + analysis
     baostock_helper.py            # baostock API layer: login, K-line fetch, stock list
     signal_compute_worker.py      # Multi-process signal detection (pickle-safe, module-level functions)
     technical_indicators.py       # TechnicalIndicators class - all 13 indicator calculations
     stock_config.py               # ALL configuration: APIs, indicator params, signal filters, workers
-    get_stock_list.py             # Stock list spider (Juhe API fallback)
-    stock_detail.py               # EastMoney real-time stock detail
   web/                            # Flask dashboard (port 5001)
     app.py                        # Flask app with REST APIs
     templates/calendar.html       # Timeline/calendar view
@@ -56,14 +54,6 @@ python app.py                    # Foreground
 ./stop.sh                        # Stop daemon
 ```
 
-### Run individual Scrapy spiders
-```bash
-cd /Users/dingli/Documents/UGit/Spiders
-scrapy crawl stock_kline -a use_file=true -a stock_codes=sh603288 -a calc_indicators=true
-scrapy crawl stock_list
-scrapy crawl stock_detail
-```
-
 ### Testing
 ```bash
 python scripts/test/test_baostock.py
@@ -73,7 +63,7 @@ No formal test framework is configured.
 ## Architecture
 
 ### Data Pipeline (run.py orchestrates)
-1. **Stock list** - `baostock_helper.py` (primary) or `get_stock_list.py` (Juhe fallback). Cached to `stock_list.txt` (7-day TTL).
+1. **Stock list** - `baostock_helper.py`. Cached to `stock_list.txt` (7-day TTL).
 2. **K-line fetch** - `baostock_helper.py` via `ProcessPoolExecutor` (default 3 workers). Periodic re-login every 40 requests to avoid connection drops. Jitter/sleep between requests to reduce BrokenPipeErrors.
 3. **Indicator + signal computation** - `BAOSTOCK_PIPELINE_FETCH_AND_COMPUTE=True` means each worker fetches then computes in one step. `signal_compute_worker.py` is designed pickle-safe (all module-level functions, no class instances).
 4. **Output** - `kdj_signals_YYYYMMDD.txt` (human-readable), `stock_signals.db` (SQLite), Tencent CloudBase (cloud upload).

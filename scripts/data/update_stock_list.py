@@ -2,8 +2,7 @@
 # -*- coding: utf-8 -*-
 """
 独立脚本：更新股票列表
-优先使用 baostock，失败时回退到聚合数据接口（Scrapy 子进程）。
-输出写入项目根目录的 stock_list.txt。
+使用 baostock 获取 A 股列表，输出写入项目根目录的 stock_list.txt。
 """
 
 import os
@@ -69,39 +68,9 @@ def main():
                         f.write(f"{code}\n")
             print(f"[INFO] 股票列表已更新（baostock），共 {len(entries)} 只 -> {stock_file_path}")
             return 0
-        print("[WARNING] baostock 返回空列表（可能为非交易日），尝试聚合接口...")
+        print("[WARNING] baostock 返回空列表（可能为非交易日）")
     except Exception as e:
-        print(f"[WARNING] baostock 获取失败: {e}，尝试聚合接口...")
-
-    # 2) 回退：聚合接口（子进程 Scrapy）
-    script_dir = os.path.join(PROJECT_ROOT, "Spiders")
-    code = """
-import sys
-sys.path.insert(0, "{script_dir}")
-from scrapy.crawler import CrawlerProcess
-from scrapy.utils.project import get_project_settings
-from spiders.get_stock_list import StockListSpider
-
-settings = get_project_settings()
-settings.set("REQUEST_FINGERPRINTER_IMPLEMENTATION", "2.7")
-process = CrawlerProcess(settings)
-process.crawl(StockListSpider, api_key="8371893ed4ab2b2f75b59c7fa26bf2fe")
-process.start()
-"""
-    import subprocess
-    result = subprocess.run(
-        [sys.executable, "-c", code.format(script_dir=script_dir)],
-        cwd=PROJECT_ROOT,
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-    )
-    if result.returncode == 0:
-        print(f"[INFO] 股票列表已更新（聚合接口） -> {stock_file_path}")
-        return 0
-    print(f"[ERROR] 更新失败 (exit code {result.returncode})")
-    if result.stderr:
-        print(result.stderr, file=sys.stderr)
+        print(f"[WARNING] baostock 获取失败: {e}")
     return 1
 
 
