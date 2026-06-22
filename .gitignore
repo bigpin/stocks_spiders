@@ -49,3 +49,4 @@ Spiders/web/.cursor/
 Spiders/web/.shared/
 
 .codegraph/
+.spiders.pid.lock

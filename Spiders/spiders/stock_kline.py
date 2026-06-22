@@ -820,7 +820,7 @@ class StockKlineSpider:
 
                 # 末尾集中重试：针对失败/超时/卡死的股票再跑几轮
                 if failed_kline_codes:
-                    retry_rounds = 3
+                    retry_rounds = 5
                     retry_parallel_threshold = 50  # 超过此数量使用多进程重试
                     retry_workers = min(3, workers)  # 重试进程数，比正常阶段保守
 
@@ -836,7 +836,7 @@ class StockKlineSpider:
                         if r > 1:
                             time.sleep(min(2 * r, 8))
                         next_remaining = set()
-                        use_parallel = len(remaining) > retry_parallel_threshold
+                        use_parallel = len(remaining) > retry_parallel_threshold and r < retry_rounds
 
                         if use_parallel:
                             # 多进程重试
