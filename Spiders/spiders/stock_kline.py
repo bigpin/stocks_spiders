@@ -859,8 +859,11 @@ class StockKlineSpider:
                                 retry_total = len(retry_futures)
                                 retry_done = 0
                                 done_futures = set()
+                                # 动态计算超时：每只股票 60 秒，最少 300 秒
+                                retry_batch_timeout = max(300, int(retry_total / retry_workers * 60))
+                                self.logger.warning(f"并行重试超时设置: {retry_batch_timeout}s（{retry_total} 只 / {retry_workers} worker）")
                                 try:
-                                    for future in as_completed(retry_futures, timeout=300):
+                                    for future in as_completed(retry_futures, timeout=retry_batch_timeout):
                                         done_futures.add(future)
                                         code = retry_futures[future]
                                         retry_done += 1
@@ -904,6 +907,7 @@ class StockKlineSpider:
                                 retry_executor.shutdown(wait=False, cancel_futures=True)
                         else:
                             # 串行重试：重置登录状态，让 worker 重新登录
+                            self.logger.warning(f"进入串行重试（第 {r}/{retry_rounds} 轮），共 {len(remaining)} 只待重试")
                             import spiders.baostock_helper as _bh
                             try:
                                 logout_baostock()
@@ -913,6 +917,7 @@ class StockKlineSpider:
                             self.logger.warning("串行重试前已重置 baostock 登录状态")
                             retry_total = len(remaining)
                             retry_done = 0
+                            retry_success = 0
                             for retry_code in list(remaining):
                                 retry_done += 1
                                 retry_timeout = 180
@@ -957,9 +962,13 @@ class StockKlineSpider:
 
                                 if retry_res.get('skip'):
                                     next_remaining.add(retry_code)
+                                else:
+                                    retry_success += 1
 
                                 if retry_done == 1 or retry_done % 50 == 0 or retry_done == retry_total:
-                                    self.logger.warning(f"重试进度: {retry_done}/{retry_total} 只")
+                                    self.logger.warning(f"重试进度: {retry_done}/{retry_total} 只，成功 {retry_success}")
+
+                            self.logger.warning(f"串行重试完成：{retry_success}/{retry_total} 只成功，{len(next_remaining)} 只仍失败")
 
                         remaining = next_remaining
                         if remaining:
