@@ -178,37 +178,39 @@ SIGNAL_FILTERS = {
     # 指标与统计所需最少历史K线天数（保障MA60/成交量均值等稳定）
     'min_history_days': 60,
     # 成功率统计窗口
-    'success_window_days': 14,
+    'success_window_days': 30,
     # 流动性与量价过滤
     'liquidity': {
         'avg_days': 20,               # 计算均值的窗口
-        'min_avg_amount': 1e8,        # 近20日平均成交额下限（单位：元）
-        'min_avg_turnover_rate': 1.0, # 近20日平均换手率下限（%）
+        'min_avg_amount': 3e7,        # 近20日平均成交额下限（单位：元）— 放行小盘股
+        'min_avg_turnover_rate': 0.5, # 近20日平均换手率下限（%）
         'min_volume_ratio': 0.7,      # 当日成交量 / 20日均量 最低比例
         'trend_volume_ratio': 1.2     # 趋势类信号要求放量比例
     },
     # 估值过滤（如无估值数据则跳过）
     'valuation': {
-        'enable': True,
+        'enable': False,               # 关闭估值过滤，高PE成长股不等于不好
         'pe_min': 0,
-        'pe_max': 85,                 # 原 80，适当放宽
+        'pe_max': 85,
         'pb_min': 0,
-        'pb_max': 9                   # 原 8，适当放宽
+        'pb_max': 9
     },
     # 历史回测统计：近3日「高胜率信号」条件（原 total>8 且≥60% 且整体≥50%）
     'signal_quality': {
-        'min_history_occurrences_exclusive': 7,  # total > 此值；原硬编码 8，先前放宽到 5，现收紧 1 档
-        'min_signal_success_rate': 60.0,
-        'min_overall_success_rate': 60.0,
+        'min_history_occurrences_exclusive': 5,  # total > 此值；放行信号出现次数较少但赔率高的股
+        'min_signal_success_rate': 55.0,         # 大涨信号胜率低但赔率高
+        'min_overall_success_rate': 55.0,        # 同上
     },
     # 写出到 kdj_signals / DB：最近3天至少几种不同 signal_type 才输出
     'signal_output': {
-        'min_distinct_signal_types': 6,
+        'min_distinct_signal_types': 5,
     },
     # 其他过滤
     'exclude_st': True,
     'require_tradestatus': True,
-    # 量能热度分（0–100，仅展示/排序，不增加过滤门槛）
+    # 量能热度分下限（低于此值直接跳过，筛掉无量冷门股）
+    'min_heat_score': 30,
+    # 量能热度分配置
     'volume_heat': {
         'enable': True,
         'ma_short': 5,           # 量趋势：MA(短)/MA(长)

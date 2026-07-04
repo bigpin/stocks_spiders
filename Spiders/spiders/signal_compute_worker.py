@@ -285,7 +285,7 @@ def _analyze_signals(df, stock_code, current_time, signal_filters):
                 max_future_return = round(
                     ((future_prices.max() - current_row['close']) / current_row['close'] * 100), 2
                 )
-                success = max_future_return >= 5
+                success = max_future_return >= 20
                 signal_stats[signal_type]['total'] += 1
                 if success:
                     signal_stats[signal_type]['success'] += 1
@@ -590,6 +590,15 @@ def compute_signals_for_stock(stock_code, stock_name, df, indicators_config, sig
         kdj_analysis = _analyze_signals(df, stock_code, current_time, signal_filters)
 
         vh, _ = _compute_volume_heat_score(df, signal_filters)
+
+        min_heat = signal_filters.get('min_heat_score', 0)
+        if vh is not None and vh < min_heat:
+            return {
+                'stock_code': stock_code,
+                'stock_name': stock_name,
+                'skip': True,
+                'reason': f'交易热度不足（{vh}/{min_heat}）',
+            }
 
         return {
             'stock_code': stock_code,
