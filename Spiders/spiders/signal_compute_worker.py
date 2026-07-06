@@ -70,6 +70,32 @@ def _passes_liquidity_filters(df, pos, signal_type, signal_filters):
     return True
 
 
+def _passes_stock_liquidity_gate(df, signal_filters):
+    """股票级透明流动性硬门槛（替代原 heat_score 硬门槛）。
+
+    仅依赖 SIGNAL_FILTERS.liquidity 的明确阈值（近 avg_days 日均成交额 / 日均换手率），
+    不引入任何不透明复合分。任一已配置阈值不达标即挡掉，专治无量僵尸股；
+    其余正常票一律放行进入信号计算。返回 (passed: bool, reason: str|None)。
+    """
+    liq = signal_filters.get('liquidity') or {}
+    avg_days = int(liq.get('avg_days', 20))
+    if len(df) < avg_days:
+        return True, None  # 样本不足交给上游 min_history_days 处理
+    start = max(0, len(df) - avg_days)
+    window = df.iloc[start:]
+    min_amt = float(liq.get('min_avg_amount', 0) or 0)
+    min_turn = float(liq.get('min_avg_turnover_rate', 0) or 0)
+    if min_amt > 0 and 'amount' in window.columns:
+        avg_amt = float(pd.to_numeric(window['amount'], errors='coerce').fillna(0.0).mean())
+        if avg_amt < min_amt:
+            return False, f'流动性不足（近{avg_days}日均额 {avg_amt / 1e8:.2f}亿 < {min_amt / 1e8:.2f}亿）'
+    if min_turn > 0 and 'turnover' in window.columns:
+        avg_turn = float(pd.to_numeric(window['turnover'], errors='coerce').fillna(0.0).mean())
+        if avg_turn < min_turn:
+            return False, f'换手率不足（近{avg_days}日均换手 {avg_turn:.2f}% < {min_turn:.2f}%）'
+    return True, None
+
+
 def _get_valuation_from_df(df):
     """从 K 线 DataFrame 最后一行取 PE/PB。"""
     pe, pb = None, None
@@ -584,21 +610,23 @@ def compute_signals_for_stock(stock_code, stock_name, df, indicators_config, sig
         if not isinstance(df.index, pd.DatetimeIndex):
             df.index = pd.to_datetime(df.index)
 
+        # 透明流动性硬门槛（替代原 heat_score 硬门槛）：在进入指标计算前先挡掉真正无量/低换手股票，省算力
+        liq_ok, liq_reason = _passes_stock_liquidity_gate(df, signal_filters)
+        if not liq_ok:
+            return {
+                'stock_code': stock_code,
+                'stock_name': stock_name,
+                'skip': True,
+                'reason': liq_reason,
+            }
+
         last_close_price = df.iloc[-1]['close']
 
         df = TechnicalIndicators.calculate_all(df, indicators_config)
         kdj_analysis = _analyze_signals(df, stock_code, current_time, signal_filters)
 
+        # 量能热度分：不再作为硬门槛，仅作为信号输出的排序/展示权重
         vh, _ = _compute_volume_heat_score(df, signal_filters)
-
-        min_heat = signal_filters.get('min_heat_score', 0)
-        if vh is not None and vh < min_heat:
-            return {
-                'stock_code': stock_code,
-                'stock_name': stock_name,
-                'skip': True,
-                'reason': f'交易热度不足（{vh}/{min_heat}）',
-            }
 
         return {
             'stock_code': stock_code,

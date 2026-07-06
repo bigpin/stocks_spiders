@@ -49,4 +49,5 @@ Spiders/web/.cursor/
 Spiders/web/.shared/
 
 .codegraph/
+.workbuddy/
 .spiders.pid.lock

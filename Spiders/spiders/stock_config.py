@@ -180,9 +180,13 @@ SIGNAL_FILTERS = {
     # 成功率统计窗口
     'success_window_days': 30,
     # 流动性与量价过滤
+    # 说明：此配置同时承担两件事——
+    #   1) 股票级硬门槛（_passes_stock_liquidity_gate）：近 avg_days 日均成交额 / 换手率不达标则整股跳过，替代原 heat 硬门槛；
+    #   2) 信号级门槛（_passes_liquidity_filters）：每个信号按其出现位置再校验一次放量比例。
+    # 想收紧/放宽“可交易性”，直接调下面的 min_avg_amount / min_avg_turnover_rate 即可（透明、可解释）。
     'liquidity': {
         'avg_days': 20,               # 计算均值的窗口
-        'min_avg_amount': 3e7,        # 近20日平均成交额下限（单位：元）— 放行小盘股
+        'min_avg_amount': 3e7,        # 近20日平均成交额下限（单位：元）— 放行小盘股；想更严可上调至 1e8(1亿)
         'min_avg_turnover_rate': 0.5, # 近20日平均换手率下限（%）
         'min_volume_ratio': 0.7,      # 当日成交量 / 20日均量 最低比例
         'trend_volume_ratio': 1.2     # 趋势类信号要求放量比例
@@ -208,11 +212,13 @@ SIGNAL_FILTERS = {
     # 其他过滤
     'exclude_st': True,
     'require_tradestatus': True,
-    # 量能热度分下限（低于此值直接跳过，筛掉无量冷门股）
-    'min_heat_score': 30,
-    # 量能热度分配置
+    # 量能热度分下限（旧版硬门槛，现已废弃）：
+    # 自方案B起热度不再作为硬过滤条件，此 key 已无任何代码读取，仅保留以兼容旧配置。
+    # 热度的「排序 / 展示」由 volume_heat 计算出的 heat_score 承担（见下方 volume_heat 及下游按 heat_score 排序）。
+    'min_heat_score': 0,
+    # 量能热度分配置（仅用于计算 heat_score 排序权重，不参与过滤）
     'volume_heat': {
-        'enable': True,
+        'enable': True,               # 热度分总开关：False 则完全不计算 heat_score（无排序权重、无「最近交易热度评分」行、DB 不落 trade_heat_score）
         'ma_short': 5,           # 量趋势：MA(短)/MA(长)
         'ma_long': 20,
         'ma_vol_recent': 3,      # 「放量」项：近 N 日均量 / MA20，降噪单日拉爆
@@ -221,7 +227,7 @@ SIGNAL_FILTERS = {
         'use_percentile_trend': True,  # True：量趋势用历史分位数映射到满分
         # 分项满分（量趋势 + 近N日放量 + 成交额）
         'weights': {'trend': 40, 'vol_recent': 25, 'amount': 35},
-        # 流动性折扣：总分 × min(1, 近20日均成交额 / liquidity_floor)
+        # 流动性折扣：仅用于压低热度排序权重（总分 × min(1, 近20日均成交额 / liquidity_floor)），不再影响过滤
         'liquidity_floor': 1e8,
     }
 }
