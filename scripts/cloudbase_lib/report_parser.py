@@ -24,6 +24,8 @@ _TOTAL_SUCCESS_RE = re.compile(r"^总成功数:\s*(?P<count>\d+)\s*$")
 _TRADE_HEAT_RE = re.compile(
     r"^最近交易热度评分:\s*(?P<score>[\d.]+)\s*/\s*(?P<max>[\d.]+)\s*$"
 )
+_STOP_LOSS_RE = re.compile(r"^止损位:\s*(?P<sl>[\d.]+)\s*$")
+_SUGGESTED_EXIT_RE = re.compile(r"^建议退出:\s*(?P<se>.+)$")
 
 # 宽松匹配事件行：以"股票:"开头，后续字段按 key: value 模式解析
 _EVENT_LINE_PREFIX_RE = re.compile(r"^股票:\s*(?P<stock_name>.+?)\((?P<stock_code>[^)]+)\)")
@@ -148,6 +150,9 @@ class ParsedStockSection:
     # 与 stock_kline 输出「最近交易热度评分: xx/100」对应
     trade_heat_score: Optional[float] = None
     trade_heat_max: Optional[float] = None
+    # 个股级止损 / 退出建议（每只股票一条，紧跟热度评分之后）
+    stop_loss: Optional[float] = None
+    suggested_exit: Optional[str] = None
     events: List[Dict[str, Any]] = None
 
     def __post_init__(self) -> None:
@@ -195,6 +200,16 @@ def parse_daily_report_lines(lines: List[str]) -> List[ParsedStockSection]:
         if m:
             current.trade_heat_score = float(m.group("score"))
             current.trade_heat_max = float(m.group("max"))
+            continue
+
+        m = _STOP_LOSS_RE.match(line)
+        if m:
+            current.stop_loss = float(m.group("sl"))
+            continue
+
+        m = _SUGGESTED_EXIT_RE.match(line)
+        if m:
+            current.suggested_exit = m.group("se").strip()
             continue
 
         ev = _parse_event_line(line)

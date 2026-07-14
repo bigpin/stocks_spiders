@@ -508,11 +508,13 @@ def wait_for_network(log_file=None, timeout=5, check_interval=5, max_checks=120)
     避免 launchd 定时任务在系统刚醒来时卡在网络请求。
     """
     import urllib.request
+    # 绕过系统代理直连测试，避免代理软件未运行时误判网络不通
+    proxy_handler = urllib.request.ProxyHandler({})
+    opener = urllib.request.build_opener(proxy_handler)
     test_urls = [
+        "https://www.baidu.com/",
         "http://connectivitycheck.platform.hicloud.com/generate_204",
-        "http://captive.apple.com/hotspot-detect.html",
-        "http://www.msftconnecttest.com/connecttest.txt",
-        "https://clients3.google.com/generate_204",
+        "https://www.qq.com/",
     ]
     message = "[STEP 0.9] 网络状态检查：等待网络恢复"
     if log_file:
@@ -521,7 +523,7 @@ def wait_for_network(log_file=None, timeout=5, check_interval=5, max_checks=120)
     for i in range(1, max_checks + 1):
         for url in test_urls:
             try:
-                urllib.request.urlopen(url, timeout=timeout)
+                opener.open(url, timeout=timeout)
                 if log_file:
                     log_to_file(log_file, "[STEP 0.9] 网络已恢复")
                 return True

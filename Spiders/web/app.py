@@ -14,6 +14,8 @@ def migrate_database():
         'ALTER TABLE stock_signals ADD COLUMN buy_day_change_rate REAL',
         'ALTER TABLE stock_signals ADD COLUMN next_day_change_rate REAL',
         'ALTER TABLE stock_signals ADD COLUMN trade_heat_score REAL',
+        'ALTER TABLE stock_signals ADD COLUMN stop_loss REAL',
+        'ALTER TABLE stock_signals ADD COLUMN suggested_exit TEXT',
     ]:
         try:
             cursor.execute(col_def)

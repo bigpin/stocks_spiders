@@ -50,4 +50,5 @@ Spiders/web/.shared/
 
 .codegraph/
 .workbuddy/
+.reasonix/
 .spiders.pid.lock

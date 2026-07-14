@@ -186,24 +186,36 @@ SIGNAL_FILTERS = {
     # 想收紧/放宽“可交易性”，直接调下面的 min_avg_amount / min_avg_turnover_rate 即可（透明、可解释）。
     'liquidity': {
         'avg_days': 20,               # 计算均值的窗口
-        'min_avg_amount': 3e7,        # 近20日平均成交额下限（单位：元）— 放行小盘股；想更严可上调至 1e8(1亿)
+        'min_avg_amount': 1e8,        # 近20日平均成交额下限（单位：元）= 1亿；直接砍掉小盘垃圾股，输出质量↑
         'min_avg_turnover_rate': 0.5, # 近20日平均换手率下限（%）
-        'min_volume_ratio': 0.7,      # 当日成交量 / 20日均量 最低比例
+        'min_volume_ratio': 1.2,      # 当日成交量 / 20日均量 最低比例；缩量骗线信号大幅减少（噪声↓）
         'trend_volume_ratio': 1.2     # 趋势类信号要求放量比例
     },
-    # 估值过滤（如无估值数据则跳过）
+    # 估值过滤（相对分位优先 + 绝对阈值仅作极端地板）
+    # 说明：启用后先按「当前 PE 相对自身历史(lookback)的分位」过滤泡沫股/亏损股；
+    # 绝对 pe/pb 阈值仅作极端地板（避免错杀 PEG≈1.5 的优质成长股）。
+    # 注：系统无 core/satellite 分类，统一用 pe_max_percentile（卫星档 80 分位）；
+    #     若后续接入核心/卫星标签，核心档可改用更严的 45 分位。
     'valuation': {
-        'enable': False,               # 关闭估值过滤，高PE成长股不等于不好
-        'pe_min': 0,
-        'pe_max': 85,
+        'enable': True,               # 启用估值过滤（相对分位优先）
+        'pe_min': 0,                  # 绝对地板：亏损/负PE直接挡
+        'pe_max': 300,                # 绝对地板（极端泡沫），非主过滤
         'pb_min': 0,
-        'pb_max': 9
+        'pb_max': 20,                 # 绝对地板
+        'pe_percentile_lookback': 1200,   # 历史PE分位回看窗口（交易日）
+        'pe_max_percentile': 80,          # 当前PE高于自身历史 80 分位则视为偏贵，挡掉
     },
     # 历史回测统计：近3日「高胜率信号」条件（原 total>8 且≥60% 且整体≥50%）
     'signal_quality': {
         'min_history_occurrences_exclusive': 5,  # total > 此值；放行信号出现次数较少但赔率高的股
         'min_signal_success_rate': 55.0,         # 大涨信号胜率低但赔率高
         'min_overall_success_rate': 55.0,        # 同上
+        # 成功率阈值（未来 N 日最大涨幅%，与 max_future_return 同单位）定义——
+        # 统一 worker 与 stock_kline 两套成功率口径，且从「绝对 +20%」改为「相对 ATR 归一」：
+        #   success = max_future_return% >= success_atr_multiple × (ATRr_14 / close × 100)
+        #   ATR 缺失时回退到绝对地板 success_return_floor（默认 20，与旧 worker 一致）
+        'success_atr_multiple': 2.0,
+        'success_return_floor': 20.0,
     },
     # 写出到 kdj_signals / DB：最近3天至少几种不同 signal_type 才输出
     'signal_output': {

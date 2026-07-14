@@ -61,6 +61,8 @@ def build_docs(file_path: str) -> List[Dict[str, Any]]:
             "total_success_count": sec.total_success_count,
             "trade_heat_score": sec.trade_heat_score,
             "trade_heat_max": sec.trade_heat_max,
+            "stop_loss": sec.stop_loss,
+            "suggested_exit": sec.suggested_exit,
             "source_file": source_file,
             "ingested_at": ingested_at,
         }

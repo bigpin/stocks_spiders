@@ -19,6 +19,13 @@ from .baostock_helper import (
     fetch_and_compute_one_baostock_worker,
     read_stock_list_txt,
 )
+from .signal_compute_worker import (
+    _success_return_threshold_pct,
+    _compute_stop_loss,
+    _compute_suggested_exit,
+    _format_suggested_exit,
+    _pe_percentile,
+)
 from concurrent.futures import ProcessPoolExecutor, as_completed, wait, FIRST_COMPLETED, CancelledError
 from concurrent.futures.process import BrokenProcessPool
 from .technical_indicators import TechnicalIndicators
@@ -332,6 +339,12 @@ class StockKlineSpider:
             return False, 'blocked'
         if pb is not None and pb_max is not None and pb > pb_max:
             return False, 'blocked'
+        # 相对分位门：当前 PE 高于自身历史 pe_max_percentile 分位 → 偏贵，挡掉
+        pe_max_pct = SIGNAL_FILTERS['valuation'].get('pe_max_percentile')
+        if pe_max_pct is not None and df is not None:
+            pe_pct = _pe_percentile(df, int(SIGNAL_FILTERS['valuation'].get('pe_percentile_lookback', 1200)))
+            if pe_pct is not None and pe_pct > float(pe_max_pct):
+                return False, 'blocked'
         return True, 'passed'
 
     def _passes_liquidity_filters(self, df, pos, signal_type):
@@ -551,6 +564,9 @@ class StockKlineSpider:
                 lowest_days INTEGER,
                 buy_day_change_rate REAL,
                 next_day_change_rate REAL,
+                trade_heat_score REAL,
+                stop_loss REAL,
+                suggested_exit TEXT,
                 created_at TEXT
             )
         ''')
@@ -560,6 +576,18 @@ class StockKlineSpider:
             pass
         try:
             self.cursor.execute('ALTER TABLE stock_signals ADD COLUMN next_day_change_rate REAL')
+        except:
+            pass
+        try:
+            self.cursor.execute('ALTER TABLE stock_signals ADD COLUMN trade_heat_score REAL')
+        except:
+            pass
+        try:
+            self.cursor.execute('ALTER TABLE stock_signals ADD COLUMN stop_loss REAL')
+        except:
+            pass
+        try:
+            self.cursor.execute('ALTER TABLE stock_signals ADD COLUMN suggested_exit TEXT')
         except:
             pass
         
@@ -1328,6 +1356,13 @@ class StockKlineSpider:
                 self.write_to_signal_file(f"总成功数: {kdj_analysis['total_success']}")
                 if vh is not None:
                     self.write_to_signal_file(f"最近交易热度评分: {vh}/100")
+                    # 个股级止损 / 退出建议（仅作参考）：每只股票一条，紧跟热度评分之后
+                    sl = res.get('stop_loss')
+                    se = res.get('suggested_exit')
+                    if sl is not None:
+                        self.write_to_signal_file(f"止损位: {sl:.2f}")
+                    if se:
+                        self.write_to_signal_file(f"建议退出: {se}")
 
                 self.write_to_signal_file("\n最近3天出现的高胜率信号：")
                 self.write_to_signal_file(f"共有{len(kdj_analysis['recent_signals'])}个信号，{len(signal_type_count)}种类型：")
@@ -1366,9 +1401,9 @@ class StockKlineSpider:
                     INSERT INTO stock_signals (
                         stock_code, stock_name, signal, signal_count,
                         overall_success_rate, insert_date, insert_price,
-                        created_at, trade_heat_score
+                        created_at, trade_heat_score, stop_loss, suggested_exit
                     )
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ''', (
                     stock_code,
                     stock_name,
@@ -1379,6 +1414,8 @@ class StockKlineSpider:
                     round(last_close_price, 2),
                     self.current_time,
                     heat_score_val,
+                    res.get('stop_loss'),
+                    res.get('suggested_exit'),
                 ))
                 self.conn.commit()
 
@@ -1467,6 +1504,17 @@ class StockKlineSpider:
                         heat_line = self._recent_trade_heat_line(vh)
                         if heat_line:
                             self.write_to_signal_file(heat_line)
+
+                        # 个股级止损 / 退出建议（仅作参考）：每只股票一条，紧跟热度评分之后
+                        _last_row = df.iloc[-1]
+                        _sl = _compute_stop_loss(_last_row['close'], _last_row.get('ATRr_14'))
+                        _se = _format_suggested_exit(
+                            _compute_suggested_exit(_last_row['close'], _last_row.get('SMA_5'), _last_row.get('SMA_10'))
+                        )
+                        if _sl is not None:
+                            self.write_to_signal_file(f"止损位: {_sl:.2f}")
+                        if _se:
+                            self.write_to_signal_file(f"建议退出: {_se}")
                         
                         # 输出最近信号
                         self.write_to_signal_file("\n最近3天出现的高胜率信号：")
@@ -1511,9 +1559,9 @@ class StockKlineSpider:
                             INSERT INTO stock_signals (
                                 stock_code, stock_name, signal, signal_count,
                                 overall_success_rate, insert_date, insert_price,
-                                created_at, trade_heat_score
+                                created_at, trade_heat_score, stop_loss, suggested_exit
                             )
-                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                         ''', (
                             stock_code,
                             stock_name,
@@ -1524,6 +1572,8 @@ class StockKlineSpider:
                             round(last_close_price, 2),
                             self.current_time,
                             heat_score_val,
+                            _sl,
+                            _se,
                         ))
                         self.conn.commit()
                         
@@ -1888,7 +1938,8 @@ class StockKlineSpider:
                 else:
                     max_future_return = round(((future_prices.max() - current_row['close']) /
                                        current_row['close'] * 100), 2)
-                    success = max_future_return >= 5
+                    success = max_future_return >= _success_return_threshold_pct(
+                        current_row.get('ATRr_14'), current_row['close'], SIGNAL_FILTERS)
                     signal_stats[signal_type]['total'] += 1
                     if success:
                         signal_stats[signal_type]['success'] += 1

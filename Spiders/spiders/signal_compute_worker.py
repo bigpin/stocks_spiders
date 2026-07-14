@@ -135,7 +135,85 @@ def _check_valuation_filters(df, signal_filters):
         return False, 'blocked'
     if pb is not None and pb_max is not None and pb > pb_max:
         return False, 'blocked'
+    # 相对分位门：当前 PE 高于自身历史 pe_max_percentile 分位 → 偏贵，挡掉
+    pe_max_pct = valuation_cfg.get('pe_max_percentile')
+    if pe_max_pct is not None:
+        pe_pct = _pe_percentile(df, int(valuation_cfg.get('pe_percentile_lookback', 1200)))
+        if pe_pct is not None and pe_pct > float(pe_max_pct):
+            return False, 'blocked'
     return True, 'passed'
+
+
+# ---------------------------------------------------------------------------
+# 成功率 / 止损 / 估值分位 辅助（worker 与 stock_kline 共用同一口径）
+# ---------------------------------------------------------------------------
+
+def _success_return_threshold_pct(atr, close, signal_filters):
+    """成功率阈值（百分比，与 max_future_return 同单位）。
+
+    优先「相对 ATR 归一」：success = max_future_return% >= multiple × (ATRr_14 / close × 100)。
+    ATR 缺失时回退到绝对地板 success_return_floor（默认 20）。
+    统一 worker 与 stock_kline 两套成功率口径，消除「成功率定义打架」。
+    """
+    sq = signal_filters.get('signal_quality') or {}
+    mult = float(sq.get('success_atr_multiple', 2.0))
+    floor = float(sq.get('success_return_floor', 20.0))
+    if atr is not None and pd.notna(atr) and close is not None and close > 0:
+        return mult * (float(atr) / float(close) * 100.0)
+    return floor
+
+
+def _compute_stop_loss(close, atr):
+    """ATR 止损位：close - 2×ATRr_14；ATR 缺失返回 None。"""
+    if close is None or atr is None or pd.isna(atr) or close <= 0:
+        return None
+    return round(float(close) - 2.0 * float(atr), 4)
+
+
+def _compute_suggested_exit(close, ma5, ma10):
+    """纪律锚点（仅作建议，不改变选股逻辑）：
+    硬止损 -8% / 破5日线减半 / 破10日线清。返回结构化 dict，字段缺失则为 None。"""
+    out = {}
+    if close is not None and close > 0:
+        out['hard_stop'] = round(float(close) * 0.92, 4)      # -8% 硬止损
+    if ma5 is not None and pd.notna(ma5):
+        out['reduce_below_ma5'] = round(float(ma5), 4)         # 破5日线减半
+    if ma10 is not None and pd.notna(ma10):
+        out['clear_below_ma10'] = round(float(ma10), 4)        # 破10日线清
+    return out or None
+
+
+def _format_suggested_exit(exit_dict):
+    """把 _compute_suggested_exit 的结构化 dict 格式化为单行可读字符串；无内容返回 None。"""
+    if not exit_dict:
+        return None
+    parts = []
+    if exit_dict.get('hard_stop') is not None:
+        parts.append(f"硬止损{exit_dict['hard_stop']}")
+    if exit_dict.get('reduce_below_ma5') is not None:
+        parts.append(f"破5日线减半{exit_dict['reduce_below_ma5']}")
+    if exit_dict.get('clear_below_ma10') is not None:
+        parts.append(f"破10日线清{exit_dict['clear_below_ma10']}")
+    return " / ".join(parts) if parts else None
+
+
+def _pe_percentile(df, lookback):
+    """当前 PE 相对自身历史(最近 lookback 个交易日)的分位（0–100，越高越贵）。
+    样本不足或无 peTTM 返回 None（交给绝对地板处理）。"""
+    if df is None or 'peTTM' not in df.columns:
+        return None
+    s = pd.to_numeric(df['peTTM'], errors='coerce')
+    recent = s.iloc[-lookback:]
+    if recent.dropna().empty:
+        return None
+    cur = recent.iloc[-1]
+    if pd.isna(cur):
+        return None
+    valid = recent.dropna()
+    if len(valid) < min(30, len(recent)):
+        return None
+    below = (valid < cur).sum()
+    return float(below) / len(valid) * 100.0
 
 
 # ---------------------------------------------------------------------------
@@ -311,7 +389,8 @@ def _analyze_signals(df, stock_code, current_time, signal_filters):
                 max_future_return = round(
                     ((future_prices.max() - current_row['close']) / current_row['close'] * 100), 2
                 )
-                success = max_future_return >= 20
+                success = max_future_return >= _success_return_threshold_pct(
+                    current_row.get('ATRr_14'), current_row['close'], signal_filters)
                 signal_stats[signal_type]['total'] += 1
                 if success:
                     signal_stats[signal_type]['success'] += 1
@@ -593,6 +672,8 @@ def compute_signals_for_stock(stock_code, stock_name, df, indicators_config, sig
       - stock_code, stock_name
       - kdj_analysis: analyze_signals 的完整返回
       - heat_score: float | None
+      - stop_loss: float | None  —— 个股级 ATR 止损位（close-2*ATRr_14），仅作参考
+      - suggested_exit: str | None —— 个股级退出建议（硬止损/破5日线减半/破10日线清）单行可读串
       - last_close_price: float
       - df: 带指标的 DataFrame（update_price_extremes 需要）
       - error: str | None
@@ -628,12 +709,21 @@ def compute_signals_for_stock(stock_code, stock_name, df, indicators_config, sig
         # 量能热度分：不再作为硬门槛，仅作为信号输出的排序/展示权重
         vh, _ = _compute_volume_heat_score(df, signal_filters)
 
+        # 个股级止损 / 退出建议（仅作参考，不改变选股逻辑）：基于最新一根 K 线的 close/ATR/MA
+        _last = df.iloc[-1]
+        stock_stop_loss = _compute_stop_loss(_last['close'], _last.get('ATRr_14'))
+        stock_suggested_exit = _format_suggested_exit(
+            _compute_suggested_exit(_last['close'], _last.get('SMA_5'), _last.get('SMA_10'))
+        )
+
         return {
             'stock_code': stock_code,
             'stock_name': stock_name,
             'skip': False,
             'kdj_analysis': kdj_analysis,
             'heat_score': vh,
+            'stop_loss': stock_stop_loss,
+            'suggested_exit': stock_suggested_exit,
             'last_close_price': last_close_price,
             'df': df,
             'error': None,
