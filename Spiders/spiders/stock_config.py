@@ -207,9 +207,9 @@ SIGNAL_FILTERS = {
     },
     # 历史回测统计：近3日「高胜率信号」条件（原 total>8 且≥60% 且整体≥50%）
     'signal_quality': {
-        'min_history_occurrences_exclusive': 5,  # total > 此值；放行信号出现次数较少但赔率高的股
-        'min_signal_success_rate': 55.0,         # 大涨信号胜率低但赔率高
-        'min_overall_success_rate': 55.0,        # 同上
+        'min_history_occurrences_exclusive': 6,  # total > 此值（即至少7次）；兼顾样本充分性与 quiet day 产出
+        'min_signal_success_rate': 60.0,         # 单信号类型历史胜率门槛
+        'min_overall_success_rate': 60.0,        # 所有信号类型综合胜率门槛
         # 成功率阈值（未来 N 日最大涨幅%，与 max_future_return 同单位）定义——
         # 统一 worker 与 stock_kline 两套成功率口径，且从「绝对 +20%」改为「相对 ATR 归一」：
         #   success = max_future_return% >= success_atr_multiple × (ATRr_14 / close × 100)

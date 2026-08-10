@@ -1,562 +1,1983 @@
 <!DOCTYPE html>
 <html lang="zh-CN">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>股票信号时间轴视图</title>
-    <link rel="stylesheet" href="css/calendar.css">
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<title>暑假学习打卡台</title>
+<style>
+:root {
+  --bg: #f0f4ff;
+  --card: #ffffff;
+  --primary: #6C5CE7;
+  --primary-light: #a29bfe;
+  --primary-bg: #f3f0ff;
+  --accent: #00CEC9;
+  --success: #00B894;
+  --warning: #FDCB6E;
+  --danger: #FF7675;
+  --text: #2D3436;
+  --text-light: #636E72;
+  --text-lighter: #b2bec3;
+  --border: #dfe6e9;
+  --radius: 16px;
+  --radius-sm: 10px;
+  --shadow: 0 2px 12px rgba(0,0,0,0.06);
+  --shadow-md: 0 4px 20px rgba(0,0,0,0.08);
+  --shadow-lg: 0 8px 30px rgba(0,0,0,0.12);
+  --font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --task-math: #FF6B6B;
+  --task-words: #4ECDC4;
+  --task-write: #45B7D1;
+  --task-english: #96CEB4;
+  --task-read: #DDA0DD;
+  --task-chinese: #F4A460;
+  --task-coding: #6C5CE7;
+  --task-sports: #FF8C42;
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+body {
+  font-family: var(--font);
+  background: var(--bg);
+  color: var(--text);
+  min-height: 100vh;
+  padding-bottom: env(safe-area-inset-bottom, 16px);
+  -webkit-font-smoothing: antialiased;
+}
+
+#app {
+  max-width: 820px;
+  margin: 0 auto;
+  padding: 12px 16px 80px;
+}
+
+/* ===== Header ===== */
+.app-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 0 12px;
+  gap: 12px;
+}
+.header-left { flex: 1; min-width: 0; }
+.app-header h1 {
+  font-size: 22px;
+  font-weight: 800;
+  background: linear-gradient(135deg, var(--primary), var(--accent));
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  margin-bottom: 2px;
+  letter-spacing: 1px;
+}
+.date-display {
+  font-size: 13px;
+  color: var(--text-light);
+  font-weight: 500;
+}
+.header-right {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-shrink: 0;
+}
+
+/* Points badge */
+.points-badge {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: linear-gradient(135deg, #FFF9E6, #FFF3CD);
+  border: 2px solid #FDCB6E;
+  border-radius: 20px;
+  padding: 6px 14px;
+  font-size: 15px;
+  font-weight: 700;
+  color: #E17055;
+  white-space: nowrap;
+}
+.points-badge svg { flex-shrink: 0; }
+
+/* Mode toggle */
+.mode-toggle {
+  padding: 10px 16px;
+  border-radius: 22px;
+  border: 2px solid var(--border);
+  background: var(--card);
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all 0.2s;
+  font-family: var(--font);
+  min-height: 50px;
+}
+.mode-toggle:hover { border-color: var(--primary); color: var(--primary); }
+.mode-toggle.parent-active {
+  background: var(--primary);
+  color: #fff;
+  border-color: var(--primary);
+}
+
+/* ===== Backup Bar ===== */
+.backup-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  background: var(--card);
+  border-radius: var(--radius-sm);
+  margin-bottom: 12px;
+  box-shadow: var(--shadow);
+  flex-wrap: wrap;
+}
+.backup-bar button {
+  padding: 10px 18px;
+  border-radius: 22px;
+  border: 1.5px solid var(--border);
+  background: var(--bg);
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s;
+  font-family: var(--font);
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--text);
+  min-height: 50px;
+}
+.backup-bar button:hover { border-color: var(--primary); color: var(--primary); background: var(--primary-bg); }
+.backup-hint {
+  font-size: 12px;
+  color: var(--warning);
+  font-weight: 600;
+  margin-left: auto;
+  background: #FFF3CD;
+  padding: 4px 10px;
+  border-radius: 12px;
+  display: none;
+}
+
+/* ===== Today Area ===== */
+.today-area {
+  background: linear-gradient(135deg, #fff, #f8f7ff);
+  border: 2px solid #e8e5ff;
+  border-radius: var(--radius);
+  padding: 16px 18px;
+  margin-bottom: 14px;
+  box-shadow: var(--shadow-md);
+}
+.today-area h2 {
+  font-size: 16px;
+  font-weight: 700;
+  margin-bottom: 12px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.today-area .progress-summary {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+.today-area .progress-bar-wrap {
+  flex: 1;
+  height: 12px;
+  background: #eee;
+  border-radius: 6px;
+  overflow: hidden;
+}
+.today-area .progress-bar-inner {
+  height: 100%;
+  border-radius: 6px;
+  background: linear-gradient(90deg, var(--accent), var(--success));
+  transition: width 0.4s ease;
+}
+.today-area .progress-text {
+  font-size: 15px;
+  font-weight: 700;
+  white-space: nowrap;
+  min-width: 50px;
+  text-align: right;
+}
+.today-remaining {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.today-remaining .chip {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 10px 16px;
+  border-radius: 24px;
+  background: var(--bg);
+  border: 1.5px solid var(--border);
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s;
+  font-family: var(--font);
+  min-height: 50px;
+}
+.today-remaining .chip:hover { border-color: var(--primary); background: var(--primary-bg); }
+.today-remaining .chip svg { width: 16px; height: 16px; flex-shrink: 0; }
+
+.today-done-all {
+  text-align: center;
+  padding: 16px 0;
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--success);
+  animation: celebrate 0.6s ease-out;
+}
+@keyframes celebrate {
+  0% { transform: scale(0.7); opacity: 0; }
+  60% { transform: scale(1.1); }
+  100% { transform: scale(1); opacity: 1; }
+}
+
+.overdue-reminder {
+  background: #FFF0F0;
+  border: 1.5px solid #FFB8B8;
+  border-radius: var(--radius-sm);
+  padding: 10px 14px;
+  margin-bottom: 12px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #E17055;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.overdue-reminder svg { flex-shrink: 0; }
+
+/* ===== Tab Navigation (PC) ===== */
+.tab-nav {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 14px;
+  background: var(--card);
+  border-radius: var(--radius);
+  padding: 4px;
+  box-shadow: var(--shadow);
+}
+.tab-btn {
+  flex: 1;
+  padding: 12px 16px;
+  border: none;
+  background: transparent;
+  border-radius: 12px;
+  font-size: 15px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.25s;
+  font-family: var(--font);
+  color: var(--text-light);
+  min-height: 48px;
+}
+.tab-btn.active {
+  background: var(--primary);
+  color: #fff;
+  box-shadow: 0 2px 10px rgba(108,92,231,0.3);
+}
+.tab-btn svg { vertical-align: middle; margin-right: 4px; }
+
+.tab-panel { display: none; }
+.tab-panel.active { display: block; animation: fadeIn 0.3s ease; }
+@keyframes fadeIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
+
+/* ===== Check-in Cards ===== */
+.checkin-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 12px;
+}
+.checkin-card {
+  background: var(--card);
+  border-radius: var(--radius);
+  padding: 16px 12px;
+  box-shadow: var(--shadow);
+  cursor: pointer;
+  transition: all 0.25s;
+  text-align: center;
+  border: 2.5px solid transparent;
+  position: relative;
+  overflow: hidden;
+  min-height: 120px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+}
+.checkin-card:hover { transform: translateY(-2px); box-shadow: var(--shadow-md); }
+.checkin-card:active { transform: scale(0.96); }
+.checkin-card.done {
+  border-color: var(--success);
+  background: #f0fdf8;
+}
+.checkin-card.done::after {
+  content: '';
+  position: absolute;
+  top: -20px;
+  right: -20px;
+  width: 50px;
+  height: 50px;
+  background: var(--success);
+  border-radius: 50%;
+  opacity: 0.08;
+}
+.checkin-card .card-icon {
+  width: 44px;
+  height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 14px;
+  transition: all 0.25s;
+}
+.checkin-card .card-icon svg { width: 28px; height: 28px; }
+.checkin-card .card-name {
+  font-size: 15px;
+  font-weight: 700;
+  line-height: 1.3;
+}
+.checkin-card .card-badge {
+  font-size: 12px;
+  font-weight: 600;
+  padding: 3px 10px;
+  border-radius: 12px;
+  transition: all 0.25s;
+}
+.checkin-card .card-badge.undone { background: #f0f0f0; color: var(--text-light); }
+.checkin-card .card-badge.done-tag { background: #d4fceb; color: #00B894; }
+.checkin-card .card-streak {
+  font-size: 11px;
+  color: var(--text-lighter);
+  font-weight: 500;
+}
+.checkin-card .check-mark {
+  position: absolute;
+  top: 6px;
+  right: 8px;
+  animation: checkPop 0.3s ease-out;
+}
+@keyframes checkPop {
+  0% { transform: scale(0); }
+  60% { transform: scale(1.3); }
+  100% { transform: scale(1); }
+}
+
+/* ===== Stats Panel ===== */
+.stats-period-selector {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 16px;
+  flex-wrap: wrap;
+}
+.stats-period-selector button {
+  padding: 10px 18px;
+  border-radius: 22px;
+  border: 1.5px solid var(--border);
+  background: var(--card);
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s;
+  font-family: var(--font);
+  min-height: 50px;
+}
+.stats-period-selector button.active {
+  background: var(--primary);
+  color: #fff;
+  border-color: var(--primary);
+}
+
+.stats-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 14px;
+  margin-bottom: 16px;
+  align-items: start;
+}
+.stats-card {
+  background: var(--card);
+  border-radius: var(--radius);
+  padding: 18px;
+  box-shadow: var(--shadow);
+  overflow: hidden;
+  min-width: 0;
+}
+.stats-card.full-width { grid-column: 1 / -1; overflow-x: auto; }
+
+/* Today mode layout: independent 2-col sub-grid so it never gets scrambled by the auto-fit parent */
+.today-cards {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+  align-items: stretch;
+}
+.today-ring-card {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.stats-card h3 {
+  font-size: 14px;
+  font-weight: 700;
+  margin-bottom: 12px;
+  color: var(--text);
+}
+.stats-card .stat-big {
+  font-size: 40px;
+  font-weight: 800;
+  line-height: 1;
+}
+.stats-card .stat-sub {
+  font-size: 13px;
+  color: var(--text-light);
+  margin-top: 4px;
+}
+
+/* Progress ring */
+.progress-ring-wrap {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+}
+.progress-ring-wrap .count-label {
+  font-size: 14px;
+  color: var(--text-light);
+  font-weight: 500;
+}
+
+/* Week matrix */
+.week-matrix { width: 100%; border-collapse: separate; border-spacing: 3px; font-size: 12px; }
+.week-matrix th {
+  text-align: center;
+  font-weight: 600;
+  color: var(--text-light);
+  padding: 4px;
+  font-size: 11px;
+}
+.week-matrix td {
+  text-align: center;
+  padding: 0;
+}
+.week-matrix .matrix-cell {
+  width: 100%;
+  aspect-ratio: 1;
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 28px;
+  min-height: 28px;
+  transition: all 0.2s;
+}
+.week-matrix .matrix-cell.done { background: var(--success); color: #fff; }
+.week-matrix .matrix-cell.undone { background: #f0f0f0; color: var(--text-lighter); }
+.week-matrix .matrix-label {
+  padding: 6px 4px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text);
+  white-space: nowrap;
+  text-align: right;
+}
+
+/* Bar chart */
+.bar-chart { width: 100%; }
+.bar-row { display: flex; align-items: center; margin-bottom: 8px; gap: 8px; }
+.bar-label { width: 65px; text-align: right; font-size: 12px; font-weight: 600; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.bar-track { flex: 1; height: 24px; background: #f0f0f0; border-radius: 6px; overflow: hidden; position: relative; }
+.bar-inner { height: 100%; border-radius: 6px; transition: width 0.5s ease; display: flex; align-items: center; justify-content: flex-end; padding-right: 8px; font-size: 12px; font-weight: 700; color: #fff; }
+.bar-value { width: 32px; font-size: 12px; font-weight: 700; color: var(--text); text-align: left; }
+
+/* Heatmap */
+.heatmap-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 3px; }
+.heatmap-cell { aspect-ratio: 1; border-radius: 5px; display: flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 700; min-width: 28px; }
+.heatmap-cell.empty { background: transparent; }
+.heatmap-header { text-align: center; font-size: 10px; color: var(--text-lighter); font-weight: 600; padding: 2px; }
+.heatmap-level-0 { background: #f5f5f5; color: #ccc; }
+.heatmap-level-1 { background: #c8f7c5; color: #00B894; }
+.heatmap-level-2 { background: #55efc4; color: #009432; }
+.heatmap-level-3 { background: #00CEC9; color: #fff; }
+.heatmap-level-4 { background: #6C5CE7; color: #fff; }
+
+/* Summary stats */
+.summary-row {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  grid-column: 1 / -1;
+}
+.summary-item {
+  flex: 1;
+  min-width: 80px;
+  background: var(--card);
+  border-radius: var(--radius-sm);
+  padding: 14px;
+  text-align: center;
+  box-shadow: var(--shadow);
+}
+.summary-item .summary-num { font-size: 28px; font-weight: 800; color: var(--primary); }
+.summary-item .summary-label { font-size: 12px; color: var(--text-light); margin-top: 2px; }
+
+/* ===== Rewards Panel ===== */
+.rewards-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 14px;
+}
+.rewards-points {
+  font-size: 18px;
+  font-weight: 800;
+  color: var(--primary);
+}
+.redeem-form-card {
+  background: var(--card);
+  border-radius: var(--radius);
+  padding: 20px;
+  box-shadow: var(--shadow);
+  margin-bottom: 16px;
+}
+.redeem-form-card h3 {
+  font-size: 16px;
+  font-weight: 700;
+  margin-bottom: 14px;
+}
+.redeem-form-row {
+  display: flex;
+  gap: 10px;
+  align-items: flex-end;
+  flex-wrap: wrap;
+}
+.redeem-form-row .field { flex: 1; min-width: 120px; }
+.redeem-form-row label {
+  display: block;
+  font-size: 13px;
+  font-weight: 600;
+  margin-bottom: 4px;
+  color: var(--text-light);
+}
+.redeem-form-row input {
+  width: 100%;
+  padding: 12px 14px;
+  border: 2px solid var(--border);
+  border-radius: 10px;
+  font-size: 16px;
+  font-family: var(--font);
+  box-sizing: border-box;
+  transition: border-color 0.2s;
+}
+.redeem-form-row input:focus { border-color: var(--primary); outline: none; }
+.redeem-submit-btn {
+  padding: 12px 28px;
+  border-radius: 22px;
+  border: none;
+  background: var(--warning);
+  color: #fff;
+  font-weight: 700;
+  font-size: 15px;
+  cursor: pointer;
+  font-family: var(--font);
+  transition: all 0.2s;
+  min-height: 50px;
+  white-space: nowrap;
+  align-self: flex-end;
+}
+.redeem-submit-btn:hover { background: #e0a800; }
+
+.redemption-history { margin-top: 14px; }
+.redemption-history h3 { font-size: 14px; font-weight: 700; margin-bottom: 10px; }
+.redemption-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 14px;
+  background: var(--card);
+  border-radius: var(--radius-sm);
+  margin-bottom: 6px;
+  box-shadow: var(--shadow);
+  font-size: 13px;
+  gap: 8px;
+}
+.redemption-item .red-date { color: var(--text-lighter); white-space: nowrap; font-size: 12px; }
+.redemption-item .red-name { font-weight: 600; flex: 1; }
+.redemption-item .red-cost { color: #E17055; font-weight: 700; white-space: nowrap; }
+.redemption-item .red-del {
+  padding: 4px 10px;
+  border-radius: 12px;
+  border: 1.5px solid #FFB8B8;
+  background: transparent;
+  color: #E17055;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  font-family: var(--font);
+  min-height: 36px;
+  white-space: nowrap;
+}
+
+/* ===== Bottom Nav (Mobile) ===== */
+.bottom-nav {
+  display: none;
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  background: var(--card);
+  box-shadow: 0 -2px 15px rgba(0,0,0,0.08);
+  padding: 8px 12px calc(8px + env(safe-area-inset-bottom, 0px));
+  z-index: 100;
+  gap: 4px;
+}
+.bottom-btn {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 6px 4px;
+  border: none;
+  background: transparent;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-lighter);
+  cursor: pointer;
+  transition: all 0.2s;
+  font-family: var(--font);
+  min-height: 48px;
+  border-radius: 10px;
+}
+.bottom-btn svg { width: 22px; height: 22px; }
+.bottom-btn.active { color: var(--primary); background: var(--primary-bg); }
+
+/* ===== Parent mode extras ===== */
+.parent-only { display: none; }
+.mode-parent .parent-only { display: flex; }
+
+/* ===== Modal ===== */
+.modal-overlay {
+  display: none;
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.4);
+  z-index: 200;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+}
+.modal-overlay.show { display: flex; }
+.modal {
+  background: var(--card);
+  border-radius: var(--radius);
+  padding: 24px;
+  max-width: 420px;
+  width: 100%;
+  max-height: 86vh;
+  overflow-y: auto;
+  box-shadow: var(--shadow-lg);
+  animation: modalIn 0.25s ease;
+}
+@keyframes modalIn { from { transform: scale(0.9); opacity: 0; } to { transform: scale(1); opacity: 1; } }
+.modal h3 { font-size: 18px; font-weight: 700; margin-bottom: 16px; }
+.modal p { font-size: 14px; color: var(--text-light); margin-bottom: 16px; }
+.modal-buttons { display: flex; gap: 8px; justify-content: flex-end; }
+.modal-btn {
+  padding: 12px 24px;
+  border-radius: 12px;
+  border: none;
+  font-size: 15px;
+  font-weight: 700;
+  cursor: pointer;
+  font-family: var(--font);
+  min-height: 50px;
+  transition: all 0.2s;
+}
+.modal-btn.cancel { background: #f0f0f0; color: var(--text); }
+.modal-btn.confirm { background: var(--danger); color: #fff; }
+.modal-btn.primary { background: var(--primary); color: #fff; }
+.modal-btn:hover { opacity: 0.9; }
+
+.pwd-input-group {
+  display: flex;
+  gap: 8px;
+  justify-content: center;
+  margin: 16px 0;
+}
+.pwd-input-group input {
+  width: 48px;
+  height: 56px;
+  text-align: center;
+  font-size: 24px;
+  font-weight: 700;
+  border: 2px solid var(--border);
+  border-radius: 10px;
+  outline: none;
+  font-family: var(--font);
+  transition: border-color 0.2s;
+}
+.pwd-input-group input:focus { border-color: var(--primary); }
+
+/* ===== Toast ===== */
+.toast {
+  position: fixed;
+  top: 20px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--text);
+  color: #fff;
+  padding: 12px 24px;
+  border-radius: 24px;
+  font-size: 14px;
+  font-weight: 600;
+  z-index: 300;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.3s ease, transform 0.3s ease;
+  box-shadow: var(--shadow-lg);
+}
+.toast.show { opacity: 1; transform: translateX(-50%) translateY(4px); }
+
+/* ===== Confetti (simple) ===== */
+.confetti-container {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 150;
+  overflow: hidden;
+}
+.confetti-piece {
+  position: absolute;
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+  animation: confettiFall 2s ease-out forwards;
+}
+@keyframes confettiFall {
+  0% { transform: translateY(-100px) rotate(0deg); opacity: 1; }
+  100% { transform: translateY(100vh) rotate(720deg); opacity: 0; }
+}
+
+/* ===== Responsive ===== */
+@media (max-width: 768px) {
+  #app { padding: 8px 10px 100px; }
+  .app-header h1 { font-size: 19px; }
+  .checkin-grid { grid-template-columns: repeat(2, 1fr); gap: 10px; }
+  .checkin-card { min-height: 100px; padding: 14px 8px; }
+  .checkin-card .card-icon { width: 38px; height: 38px; }
+  .checkin-card .card-icon svg { width: 24px; height: 24px; }
+  .checkin-card .card-name { font-size: 13px; }
+  .stats-grid { grid-template-columns: 1fr; gap: 10px; }
+  .stats-card.full-width { grid-column: 1; }
+  .today-cards { grid-template-columns: 1fr; }
+    .tab-nav { display: none; }
+    .bottom-nav { display: flex; }
+    .redeem-form-row { flex-direction: column; gap: 8px; }
+    .redeem-form-row .field { min-width: 100%; }
+    .redeem-submit-btn { width: 100%; }
+  .summary-row { gap: 8px; }
+  .summary-item .summary-num { font-size: 22px; }
+  .today-area h2 { font-size: 14px; }
+  .bar-label { width: 50px; font-size: 11px; }
+}
+
+@media (max-width: 380px) {
+  .checkin-grid { gap: 8px; }
+  .checkin-card { padding: 10px 6px; min-height: 90px; }
+  .checkin-card .card-name { font-size: 12px; }
+  .checkin-card .card-icon { width: 32px; height: 32px; }
+  .checkin-card .card-icon svg { width: 20px; height: 20px; }
+  .header-right { gap: 6px; }
+  .points-badge { padding: 4px 10px; font-size: 13px; }
+}
+</style>
 </head>
 <body>
-    <div class="container">
-        <div class="header">
-            <div class="header-left">
-                <div class="header-title">
-                    <span class="header-icon">
-                        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                            <rect x="3" y="4" width="18" height="18" rx="2" stroke="currentColor" stroke-width="2" fill="none"/>
-                            <line x1="3" y1="10" x2="21" y2="10" stroke="currentColor" stroke-width="2"/>
-                            <line x1="8" y1="2" x2="8" y2="6" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
-                            <line x1="16" y1="2" x2="16" y2="6" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
-                            <circle cx="12" cy="15" r="1.5" fill="currentColor"/>
-                            <circle cx="8" cy="15" r="1.5" fill="currentColor"/>
-                            <circle cx="16" cy="15" r="1.5" fill="currentColor"/>
-                            <line x1="8" y1="15" x2="16" y2="15" stroke="currentColor" stroke-width="1.5"/>
-                        </svg>
-                    </span>
-                    股票信号垂直时间轴视图
-                </div>
-                <div class="header-subtitle">垂直时间轴，Ctrl+滚轮缩放，点击选中/取消股票</div>
-            </div>
-        </div>
-
-        <div class="content-wrapper">
-            <button class="sidebar-toggle" id="sidebar-toggle" title="收起/展开筛选区">
-                <svg class="toggle-icon" viewBox="0 0 24 24">
-                    <path d="M15 18l-6-6 6-6"/>
-                </svg>
-            </button>
-            <div class="sidebar" id="sidebar">
-                <!-- Timeline Controls -->
-                <div class="controls" id="timeline-controls">
-                    <div class="controls-row">
-                        <div class="control-group">
-                            <div class="control-label">股票代码</div>
-                            <select id="filter-stock-code" class="control-input">
-                                <option value="">全部</option>
-                            </select>
-                        </div>
-                        <div class="control-group">
-                            <div class="control-label">开始日期</div>
-                            <input id="filter-date-from" type="date" class="control-input">
-                        </div>
-                        <div class="control-group">
-                            <div class="control-label">结束日期</div>
-                            <input id="filter-date-to" type="date" class="control-input">
-                        </div>
-                    </div>
-                    <div class="controls-row">
-                        <div class="control-group">
-                            <div class="control-label">买入价格范围</div>
-                            <div style="display: flex; gap: 8px; align-items: center; width: 100%; box-sizing: border-box;">
-                                <input type="number" id="filter-timeline-price-min" class="control-input" placeholder="最低价" style="flex: 1;" min="0" step="0.01">
-                                <span style="flex-shrink: 0;">-</span>
-                                <input type="number" id="filter-timeline-price-max" class="control-input" placeholder="最高价" style="flex: 1;" min="0" step="0.01">
-                            </div>
-                        </div>
-                        <div class="control-group">
-                            <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 6px;">
-                                <input type="checkbox" id="filter-timeline-enable-buy-day-change" style="width: 16px; height: 16px;">
-                                <div class="control-label" style="margin: 0;">买入当天涨跌范围</div>
-                            </div>
-                            <div class="slider-group">
-                                <div class="slider-container">
-                                    <span class="slider-value" id="filter-timeline-buy-day-change-min-value">-10%</span>
-                                    <div class="slider-wrapper">
-                                        <input type="range" id="filter-timeline-buy-day-change-min" class="slider" min="-20" max="20" step="0.1" value="-10" disabled>
-                                    </div>
-                                    <span class="slider-value" id="filter-timeline-buy-day-change-max-value">10%</span>
-                                    <div class="slider-wrapper">
-                                        <input type="range" id="filter-timeline-buy-day-change-max" class="slider" min="-20" max="20" step="0.1" value="10" disabled>
-                                    </div>
-                                </div>
-                                <div class="slider-label-row">
-                                    <span>-20%</span>
-                                    <span>0%</span>
-                                    <span>20%</span>
-                                </div>
-                            </div>
-                        </div>
-                        <div class="control-group">
-                            <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 6px;">
-                                <input type="checkbox" id="filter-timeline-enable-next-day-change" style="width: 16px; height: 16px;">
-                                <div class="control-label" style="margin: 0;">第二天涨跌范围</div>
-                            </div>
-                            <div class="slider-group">
-                                <div class="slider-container">
-                                    <span class="slider-value" id="filter-timeline-next-day-change-min-value">-10%</span>
-                                    <div class="slider-wrapper">
-                                        <input type="range" id="filter-timeline-next-day-change-min" class="slider" min="-20" max="20" step="0.1" value="-10" disabled>
-                                    </div>
-                                    <span class="slider-value" id="filter-timeline-next-day-change-max-value">10%</span>
-                                    <div class="slider-wrapper">
-                                        <input type="range" id="filter-timeline-next-day-change-max" class="slider" min="-20" max="20" step="0.1" value="10" disabled>
-                                    </div>
-                                </div>
-                                <div class="slider-label-row">
-                                    <span>-20%</span>
-                                    <span>0%</span>
-                                    <span>20%</span>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                    <div class="controls-row">
-                        <div class="control-group">
-                            <div class="control-label">显示内容</div>
-                            <div class="toggle-group">
-                                <label class="toggle-item">
-                                    <input type="checkbox" id="toggle-buy" checked>
-                                    买入点
-                                </label>
-                                <label class="toggle-item">
-                                    <input type="checkbox" id="toggle-sell-high" checked>
-                                    最高价线
-                                </label>
-                                <label class="toggle-item">
-                                    <input type="checkbox" id="toggle-sell-low" checked>
-                                    最低价线
-                                </label>
-                                <label class="toggle-item">
-                                    <input type="checkbox" id="toggle-show-name" checked>
-                                    股票名称
-                                </label>
-                                <label class="toggle-item">
-                                    <input type="checkbox" id="toggle-show-profit" checked>
-                                    收益信息
-                                </label>
-                            </div>
-                        </div>
-                    </div>
-                    <div class="controls-row">
-                        <div class="control-group">
-                            <div class="control-label">🔥 交易热度评分范围（0-100）</div>
-                            <div style="display: flex; gap: 8px; align-items: center; width: 100%; box-sizing: border-box;">
-                                <input type="number" id="filter-timeline-heat-min" class="control-input" placeholder="最低分" style="flex: 1;" min="0" max="100" step="1" value="50">
-                                <span style="flex-shrink: 0;">-</span>
-                                <input type="number" id="filter-timeline-heat-max" class="control-input" placeholder="最高分" style="flex: 1;" min="0" max="100" step="1">
-                            </div>
-                            <span style="font-size:11px;color:#999;margin-top:2px;">留空=不限；有填写时无评分数据的信号将被过滤</span>
-                        </div>
-                        <div class="control-group">
-                            <div class="control-label">操作</div>
-                            <div style="display: flex; gap: 8px;">
-                                <button class="btn btn-primary" onclick="reloadTimeline()" style="flex: 1;">应用筛选</button>
-                                <button class="btn btn-secondary" onclick="resetFilters()" style="flex: 1;">重置</button>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-
-                <!-- Data List Controls -->
-                <div class="controls" id="data-list-controls" style="display: none;">
-                    <div class="controls-row">
-                        <div class="control-group">
-                            <div class="control-label">股票代码</div>
-                            <select id="data-list-stock-code" class="control-input">
-                                <option value="">全部</option>
-                            </select>
-                        </div>
-                        <div class="control-group">
-                            <div class="control-label">股票名称</div>
-                            <select id="data-list-stock-name" class="control-input">
-                                <option value="">全部</option>
-                            </select>
-                        </div>
-                        <div class="control-group">
-                            <div class="control-label">信号类型</div>
-                            <select id="data-list-signal-type" class="control-input">
-                                <option value="">全部</option>
-                            </select>
-                        </div>
-                    </div>
-                    <div class="controls-row">
-                        <div class="control-group">
-                            <div class="control-label">最低成功率 (%)</div>
-                            <input type="number" id="data-list-min-success-rate" class="control-input" placeholder="如: 60" min="0" max="100">
-                        </div>
-                        <div class="control-group">
-                            <div class="control-label">最少信号数</div>
-                            <input type="number" id="data-list-min-signal-count" class="control-input" placeholder="如: 3" min="1">
-                        </div>
-                        <div class="control-group">
-                            <div class="control-label">每页显示</div>
-                            <select id="data-list-per-page" class="control-input">
-                                <option value="50" selected>50条</option>
-                                <option value="100">100条</option>
-                                <option value="200">200条</option>
-                                <option value="500">500条</option>
-                            </select>
-                        </div>
-                    </div>
-                    <div class="controls-row">
-                        <div class="control-group">
-                            <div class="control-label">开始日期</div>
-                            <input type="date" id="data-list-date-from" class="control-input">
-                        </div>
-                        <div class="control-group">
-                            <div class="control-label">结束日期</div>
-                            <input type="date" id="data-list-date-to" class="control-input">
-                        </div>
-                        <div class="control-group">
-                            <div class="control-label">排序方式</div>
-                            <select id="data-list-sort-by" class="control-input">
-                                <option value="created_at">创建时间</option>
-                                <option value="overall_success_rate">成功率</option>
-                                <option value="signal_count">信号数量</option>
-                                <option value="insert_date">插入日期</option>
-                                <option value="highest_change_rate">最高涨幅</option>
-                            </select>
-                        </div>
-                    </div>
-                    <div class="controls-row">
-                        <div class="control-group">
-                            <div class="control-label">排序顺序</div>
-                            <select id="data-list-sort-order" class="control-input">
-                                <option value="desc">降序</option>
-                                <option value="asc">升序</option>
-                            </select>
-                        </div>
-                        <div class="control-group">
-                            <div class="control-label">操作</div>
-                            <div style="display: flex; gap: 8px;">
-                                <button class="btn btn-primary" onclick="loadDataList(1)" style="flex: 1;">搜索</button>
-                                <button class="btn btn-secondary" onclick="resetDataListFilters()" style="flex: 1;">重置</button>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-
-                <!-- Matrix Controls -->
-                <div class="controls" id="matrix-controls" style="display: none;">
-                    <div class="controls-row">
-                        <div class="control-group">
-                            <div class="control-label">日期区间</div>
-                            <select id="filter-date-range" class="control-input">
-                                <option value="" selected>全部</option>
-                                <option value="7">最近7天</option>
-                                <option value="14">最近14天</option>
-                                <option value="30">最近一个月</option>
-                                <option value="60">最近两个月</option>
-                                <option value="90">最近三个月</option>
-                                <option value="180">最近半年</option>
-                            </select>
-                        </div>
-                        <div class="control-group">
-                            <div class="control-label">跟踪天数范围</div>
-                            <div style="display: flex; gap: 8px; align-items: center; width: 100%; box-sizing: border-box;">
-                                <input type="number" id="filter-days-min" class="control-input" placeholder="最小天数" style="flex: 1;" min="0" value="10">
-                                <span style="flex-shrink: 0;">-</span>
-                                <input type="number" id="filter-days-max" class="control-input" placeholder="最大天数" style="flex: 1;" min="0">
-                            </div>
-                        </div>
-                        <div class="control-group">
-                            <div class="control-label">触达率筛选</div>
-                            <input type="number" id="filter-reach-rate" class="control-input" placeholder="最小触达率%" min="0" max="100" step="0.1" value="80">
-                            <span style="font-size: 11px; color: #666; margin-top: 2px;">低于该触达率的网格会置灰</span>
-                        </div>
-                    </div>
-                    <div class="controls-row">
-                        <div class="control-group">
-                            <div class="control-label">买入价格范围</div>
-                            <div style="display: flex; gap: 8px; align-items: center; width: 100%; box-sizing: border-box;">
-                                <input type="number" id="filter-price-min" class="control-input" placeholder="最低价" style="flex: 1;" min="0" step="0.01">
-                                <span style="flex-shrink: 0;">-</span>
-                                <input type="number" id="filter-price-max" class="control-input" placeholder="最高价" style="flex: 1;" min="0" step="0.01">
-                            </div>
-                        </div>
-                        <div class="control-group">
-                            <div class="control-label">最高涨幅范围</div>
-                            <div style="display: flex; gap: 8px; align-items: center; width: 100%; box-sizing: border-box;">
-                                <input type="number" id="filter-high-change-min" class="control-input" placeholder="最小涨幅%" style="flex: 1;" step="0.01">
-                                <span style="flex-shrink: 0;">-</span>
-                                <input type="number" id="filter-high-change-max" class="control-input" placeholder="最大涨幅%" style="flex: 1;" step="0.01">
-                            </div>
-                        </div>
-                    </div>
-                    <div class="controls-row">
-                        <div class="control-group">
-                            <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 6px;">
-                                <input type="checkbox" id="filter-enable-buy-day-change" style="width: 16px; height: 16px;">
-                                <div class="control-label" style="margin: 0;">买入当天涨跌范围</div>
-                            </div>
-                            <div class="slider-group">
-                                <div class="slider-container">
-                                    <span class="slider-value" id="filter-buy-day-change-min-value">-10%</span>
-                                    <div class="slider-wrapper">
-                                        <input type="range" id="filter-buy-day-change-min" class="slider" min="-20" max="20" step="0.1" value="-10" disabled>
-                                    </div>
-                                    <span class="slider-value" id="filter-buy-day-change-max-value">10%</span>
-                                    <div class="slider-wrapper">
-                                        <input type="range" id="filter-buy-day-change-max" class="slider" min="-20" max="20" step="0.1" value="10" disabled>
-                                    </div>
-                                </div>
-                                <div class="slider-label-row">
-                                    <span>-20%</span>
-                                    <span>0%</span>
-                                    <span>20%</span>
-                                </div>
-                            </div>
-                        </div>
-                        <div class="control-group">
-                            <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 6px;">
-                                <input type="checkbox" id="filter-enable-next-day-change" style="width: 16px; height: 16px;">
-                                <div class="control-label" style="margin: 0;">第二天涨跌范围</div>
-                            </div>
-                            <div class="slider-group">
-                                <div class="slider-container">
-                                    <span class="slider-value" id="filter-next-day-change-min-value">-10%</span>
-                                    <div class="slider-wrapper">
-                                        <input type="range" id="filter-next-day-change-min" class="slider" min="-20" max="20" step="0.1" value="-10" disabled>
-                                    </div>
-                                    <span class="slider-value" id="filter-next-day-change-max-value">10%</span>
-                                    <div class="slider-wrapper">
-                                        <input type="range" id="filter-next-day-change-max" class="slider" min="-20" max="20" step="0.1" value="10" disabled>
-                                    </div>
-                                </div>
-                                <div class="slider-label-row">
-                                    <span>-20%</span>
-                                    <span>0%</span>
-                                    <span>20%</span>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                    <div class="controls-row">
-                        <div class="control-group">
-                            <div class="control-label">🔥 交易热度评分范围（0-100）</div>
-                            <div style="display: flex; gap: 8px; align-items: center; width: 100%; box-sizing: border-box;">
-                                <input type="number" id="filter-heat-min" class="control-input" placeholder="最低分" style="flex: 1;" min="0" max="100" step="1" value="50">
-                                <span style="flex-shrink: 0;">-</span>
-                                <input type="number" id="filter-heat-max" class="control-input" placeholder="最高分" style="flex: 1;" min="0" max="100" step="1">
-                            </div>
-                            <span style="font-size:11px;color:#999;margin-top:2px;">留空=不限；有填写时无评分数据的信号将被过滤</span>
-                        </div>
-                        <div class="control-group">
-                            <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 6px;">
-                                <input type="checkbox" id="filter-enable-force-sell" style="width: 16px; height: 16px;" checked>
-                                <div class="control-label" style="margin: 0;">未触达时强制持有后卖出</div>
-                            </div>
-                            <div style="display: flex; align-items: center; gap: 8px;">
-                                <span style="font-size:12px;color:#666;white-space:nowrap;">持有天数</span>
-                                <input type="number" id="filter-force-sell-days" class="control-input" value="30" min="1" max="999" style="width:70px;">
-                                <span style="font-size:11px;color:#999;">天后按收盘价卖出</span>
-                            </div>
-                        </div>
-                        <div class="control-group">
-                            <div class="control-label">操作</div>
-                            <div style="display: flex; gap: 8px;">
-                                <button class="btn btn-primary" onclick="updateCalc()" style="flex: 1;">应用筛选</button>
-                                <button class="btn btn-secondary" onclick="resetCalcFilters()" style="flex: 1;">重置</button>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-
-            <div class="main-content">
-                <div class="tabs-nav">
-                    <button class="tab-btn active" data-tab="timeline">时间轴视图</button>
-                    <button class="tab-btn" data-tab="matrix">收益矩阵</button>
-                    <button class="tab-btn" data-tab="data-list">数据列表</button>
-                </div>
-
-                <div class="tab-content active" id="tab-timeline">
-                    <div class="stats-panel" id="stats-panel">
-                        <div class="stats-panel-section">
-                            <div class="stats-panel-caption">全库概览</div>
-                            <div class="stats-panel-grid">
-                                <div class="stat-item">
-                                    <div class="stat-label">总信号数</div>
-                                    <div class="stat-value" id="stat-total">-</div>
-                                </div>
-                                <div class="stat-item">
-                                    <div class="stat-label">股票总数</div>
-                                    <div class="stat-value" id="stat-stocks">-</div>
-                                </div>
-                                <div class="stat-item">
-                                    <div class="stat-label">平均成功率</div>
-                                    <div class="stat-value" id="stat-success">-</div>
-                                </div>
-                                <div class="stat-item">
-                                    <div class="stat-label">平均最高涨幅</div>
-                                    <div class="stat-value positive" id="stat-highest">-</div>
-                                </div>
-                            </div>
-                        </div>
-                        <div class="stats-panel-section stats-panel-section--filtered">
-                            <div class="stats-panel-caption">当前筛选后（时间轴数据）</div>
-                            <div class="stats-panel-grid">
-                                <div class="stat-item">
-                                    <div class="stat-label">信号数</div>
-                                    <div class="stat-value" id="stat-filter-signals">-</div>
-                                </div>
-                                <div class="stat-item">
-                                    <div class="stat-label">涉及股票</div>
-                                    <div class="stat-value" id="stat-filter-stocks">-</div>
-                                </div>
-                                <div class="stat-item">
-                                    <div class="stat-label">平均成功率</div>
-                                    <div class="stat-value" id="stat-filter-success">-</div>
-                                </div>
-                                <div class="stat-item">
-                                    <div class="stat-label">平均最高涨幅</div>
-                                    <div class="stat-value positive" id="stat-filter-highest">-</div>
-                                </div>
-                                <div class="stat-item">
-                                    <div class="stat-label">平均最低涨幅</div>
-                                    <div class="stat-value" id="stat-filter-lowest">-</div>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                    <div class="timeline-wrapper">
-                        <div class="timeline-container">
-                            <div class="timeline-axis" id="timeline-axis">
-                                <div class="timeline-content" id="timeline-content"></div>
-                            </div>
-                        </div>
-                        <div class="legend">
-                            <div class="legend-item">
-                                <div class="legend-color legend-high"></div>
-                                <span>最高价线</span>
-                            </div>
-                            <div class="legend-item">
-                                <div class="legend-color legend-low"></div>
-                                <span>最低价线</span>
-                            </div>
-                            <div class="legend-item">
-                                <div class="legend-color legend-buy"></div>
-                                <span>买入点</span>
-                            </div>
-                        </div>
-                        <div class="buy-point-legend">
-                            <div class="buy-point-legend-title">买入点颜色说明：</div>
-                            <div class="buy-point-legend-grid">
-                                <div class="legend-item">
-                                    <div class="legend-color legend-buy-color-1"></div>
-                                    <span>买入当天上涨 + 第二天上涨</span>
-                                </div>
-                                <div class="legend-item">
-                                    <div class="legend-color legend-buy-color-2"></div>
-                                    <span>买入当天下跌 + 第二天下跌</span>
-                                </div>
-                                <div class="legend-item">
-                                    <div class="legend-color legend-buy-color-3"></div>
-                                    <span>买入当天上涨 + 第二天下跌</span>
-                                </div>
-                                <div class="legend-item">
-                                    <div class="legend-color legend-buy-color-4"></div>
-                                    <span>买入当天下跌 + 第二天上涨</span>
-                                </div>
-                                <div class="legend-item">
-                                    <div class="legend-color legend-buy-color-5"></div>
-                                    <span>仅买入当天上涨</span>
-                                </div>
-                                <div class="legend-item">
-                                    <div class="legend-color legend-buy-color-6"></div>
-                                    <span>仅买入当天下跌</span>
-                                </div>
-                            </div>
-                        </div>
-                        <div class="zoom-hint">💡 提示：在时间轴上按住 Ctrl 滚动鼠标滚轮可以缩放时间间距</div>
-                        <button id="load-more-btn" class="btn btn-secondary" style="display:none;margin-top:12px;width:100%;" onclick="loadMoreTimeline()">加载更多</button>
-                    </div>
-                </div>
-
-                <div class="tab-content" id="tab-matrix">
-                    <div class="calc-panel">
-                        <div class="calc-title">📊 止盈止损触达率矩阵</div>
-                        <div style="font-size:12px;color:#666;margin-bottom:10px;line-height:1.7;">
-                            每格显示：<b style="color:#1565c0;">触达率</b>（窗口内触及止盈或止损的信号占比）
-                            + 触发中的 <span style="color:#e53935;">止盈%</span> / <span style="color:#43a047;">止损%</span>
-                            + <b>触发均值</b>（止盈固定 +pt%，止损固定 sl%，加权平均）。
-                            未在窗口内触发的股票不计入均值，仅计入触达率分母。
-                        </div>
-                        <div style="font-size:12px;margin-bottom:12px;display:flex;gap:16px;flex-wrap:wrap;align-items:center;">
-                            <span style="display:inline-flex;align-items:center;gap:4px;">
-                                <span style="display:inline-block;width:12px;height:12px;background:#c8e6c9;border:1px solid #ccc;border-radius:2px;"></span>
-                                触达率≥60% 且止盈率≥60%（高质量）
-                            </span>
-                            <span style="display:inline-flex;align-items:center;gap:4px;">
-                                <span style="display:inline-block;width:12px;height:12px;background:#ffcdd2;border:1px solid #ccc;border-radius:2px;"></span>
-                                触达率≥60% 但止损多（止盈率&lt;40%）
-                            </span>
-                            <span style="display:inline-flex;align-items:center;gap:4px;">
-                                <span style="display:inline-block;width:12px;height:12px;background:#fff3cd;border:1px solid #ccc;border-radius:2px;"></span>
-                                综合得分 Top 10
-                            </span>
-                            <span style="display:inline-flex;align-items:center;gap:4px;">
-                                <span style="display:inline-block;width:12px;height:12px;background:#f5f5f5;border:1px solid #ccc;border-radius:2px;"></span>
-                                触达率&lt;15%（参考意义有限）
-                            </span>
-                        </div>
-                        <div class="calc-summary" id="calc-summary">
-                            <div class="stat-item">
-                                <div class="stat-label">总信号数</div>
-                                <div class="stat-value" id="calc-total-stocks">-</div>
-                            </div>
-                        </div>
-                        <div style="overflow-x: auto; margin-top: 16px;">
-                            <table class="calc-table">
-                                <thead id="calc-table-header">
-                                </thead>
-                                <tbody id="calc-table-body">
-                                </tbody>
-                            </table>
-                        </div>
-                    </div>
-                </div>
-
-                <div class="tab-content" id="tab-data-list">
-                    <div class="data-list-container">
-                        <div id="data-list-loading" class="data-list-loading" style="display: none;">加载中...</div>
-                        <div id="data-list-empty" class="data-list-empty" style="display: none;">暂无数据</div>
-                        <div class="data-list-table-wrapper" id="data-list-table-wrapper" style="display: none;">
-                            <table id="data-list-table" class="data-list-table">
-                                <thead>
-                                    <tr>
-                                        <th class="sortable" onclick="sortDataList('stock_code')">股票代码</th>
-                                        <th class="sortable" onclick="sortDataList('stock_name')">股票名称</th>
-                                        <th class="sortable" onclick="sortDataList('signal_count')">信号数</th>
-                                        <th class="sortable" onclick="sortDataList('overall_success_rate')">成功率</th>
-                                        <th class="sortable" onclick="sortDataList('insert_date')">插入日期</th>
-                                        <th class="sortable" onclick="sortDataList('insert_price')">插入价格</th>
-                                        <th class="sortable" onclick="sortDataList('highest_change_rate')">最高涨幅</th>
-                                        <th class="sortable" onclick="sortDataList('highest_price_date')">最高价日期</th>
-                                        <th class="sortable" onclick="sortDataList('highest_days')">最高价天数</th>
-                                        <th class="sortable" onclick="sortDataList('lowest_change_rate')">最低涨幅</th>
-                                        <th class="sortable" onclick="sortDataList('lowest_price_date')">最低价日期</th>
-                                        <th class="sortable" onclick="sortDataList('lowest_days')">最低价天数</th>
-                                        <th class="sortable" onclick="sortDataList('buy_day_change_rate')">买入当天涨跌</th>
-                                        <th class="sortable" onclick="sortDataList('next_day_change_rate')">第二天涨跌</th>
-                                    </tr>
-                                </thead>
-                                <tbody id="data-list-table-body">
-                                </tbody>
-                            </table>
-            </div>
-                        <div class="data-list-pagination" id="data-list-pagination" style="display: none;"></div>
-        </div>
+<div id="app">
+  <!-- Header -->
+  <header class="app-header">
+    <div class="header-left">
+      <h1>暑假学习打卡台</h1>
+      <div class="date-display" id="dateDisplay"></div>
     </div>
-            </div>
-        </div>
-        
-        <div class="footer">
-            <p>&copy; 2026 股票信号分析系统. 版权所有.</p>
-            <p style="margin-top: 8px; font-size: 12px; color: #999;">本系统仅供学习和研究使用，不构成任何投资建议。</p>
-        </div>
+    <div class="header-right">
+      <div class="points-badge" id="pointsBadge">
+        <svg width="20" height="20" viewBox="0 0 20 20"><polygon points="10,1 12.5,7.5 19.5,7.5 13.8,12 15.5,18.7 10,15 4.5,18.7 6.2,12 0.5,7.5 7.5,7.5" fill="#FDCB6E"/></svg>
+        <span id="pointsValue">0</span>
+      </div>
+      <button class="mode-toggle" id="modeToggle" onclick="toggleMode()">家长模式</button>
     </div>
-    <script src="js/calendar.js"></script>
-<!-- Cloudflare Web Analytics --><script defer src='https://static.cloudflareinsights.com/beacon.min.js' data-cf-beacon='{"token": "a46928d16b524c2e8612823940bd079f"}'></script><!-- End Cloudflare Web Analytics -->
+  </header>
+
+  <!-- Backup Bar -->
+  <div class="backup-bar">
+    <button onclick="exportData()">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+      导出备份
+    </button>
+    <button onclick="document.getElementById('importFile').click()">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+      导入恢复
+    </button>
+    <input type="file" id="importFile" accept=".json" style="display:none" onchange="importData(event)">
+    <span class="backup-hint" id="backupHint"></span>
+  </div>
+
+  <!-- Today's Tasks Area -->
+  <section class="today-area" id="todayArea">
+    <h2>
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+      今天要处理 <span id="todayDateLabel"></span>
+    </h2>
+    <div id="todayContent"></div>
+  </section>
+
+  <!-- Tab Navigation (PC) -->
+  <nav class="tab-nav" id="tabNav">
+    <button class="tab-btn active" data-tab="checkin" onclick="switchTab('checkin')">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>
+      今日打卡
+    </button>
+    <button class="tab-btn" data-tab="stats" onclick="switchTab('stats')">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
+      统计看板
+    </button>
+    <button class="tab-btn" data-tab="rewards" onclick="switchTab('rewards')">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="5" r="2"/><path d="M10 22V14H8V8a4 4 0 0 1 8 0v6h-2v8"/></svg>
+      积分奖励
+    </button>
+  </nav>
+
+  <!-- Tab Content -->
+  <main class="tab-content">
+    <div id="tab-checkin" class="tab-panel active"></div>
+    <div id="tab-stats" class="tab-panel"></div>
+    <div id="tab-rewards" class="tab-panel"></div>
+  </main>
+
+  <!-- Bottom Nav (Mobile) -->
+  <nav class="bottom-nav" id="bottomNav">
+    <button class="bottom-btn active" data-tab="checkin" onclick="switchTab('checkin')">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>
+      打卡
+    </button>
+    <button class="bottom-btn" data-tab="stats" onclick="switchTab('stats')">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
+      统计
+    </button>
+    <button class="bottom-btn" data-tab="rewards" onclick="switchTab('rewards')">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="12,2 15,9 22,9 16,13.5 18.5,21 12,17 5.5,21 8,13.5 2,9 9,9"/></svg>
+      奖励
+    </button>
+  </nav>
+</div>
+
+<!-- Modal -->
+<div class="modal-overlay" id="modalOverlay">
+  <div class="modal" id="modalContent"></div>
+</div>
+
+<!-- Toast -->
+<div class="toast" id="toast"></div>
+
+<!-- Confetti Container -->
+<div class="confetti-container" id="confetti"></div>
+
+<script>
+/* ============ CONSTANTS ============ */
+var PREFIX = 'wb_summer_study_';
+var TASKS = [
+  { id: 'math', name: '数学计算', color: '#FF6B6B', bg: '#FFF0F0', points: 1 },
+  { id: 'words', name: '单词背诵', color: '#4ECDC4', bg: '#E8FFFD', points: 1 },
+  { id: 'write', name: '写单词',   color: '#45B7D1', bg: '#E8F8FF', points: 1 },
+  { id: 'english', name: '英语朗读', color: '#96CEB4', bg: '#EFFFF5', points: 1 },
+  { id: 'reading', name: '读书',    color: '#DDA0DD', bg: '#FDF0FD', points: 1 },
+  { id: 'chinese', name: '语文练习', color: '#F4A460', bg: '#FFF5EB', points: 1 },
+  { id: 'coding', name: '编程练习', color: '#6C5CE7', bg: '#F3F0FF', points: 1 },
+  { id: 'sports', name: '体育运动', color: '#FF8C42', bg: '#FFF3EB', points: 1 }
+];
+
+/* ============ STATE ============ */
+var state = {
+  records: {},
+  points: 0,
+  rewards: [],
+  redemptions: [],
+  password: null,
+  mode: 'child',
+  currentTab: 'checkin',
+  statsPeriod: 'today',
+  hasCelebrated: false
+};
+
+/* ============ STORAGE ============ */
+function loadState() {
+  try {
+    var r = localStorage.getItem(PREFIX + 'records');
+    if (r) state.records = JSON.parse(r);
+    var p = localStorage.getItem(PREFIX + 'points');
+    if (p !== null) state.points = parseInt(p) || 0;
+    var rw = localStorage.getItem(PREFIX + 'rewards');
+    if (rw) state.rewards = JSON.parse(rw);
+    var rd = localStorage.getItem(PREFIX + 'redemptions');
+    if (rd) state.redemptions = JSON.parse(rd);
+    var pw = localStorage.getItem(PREFIX + 'password');
+    if (pw) state.password = pw;
+    var ce = localStorage.getItem(PREFIX + 'celebrated');
+    if (ce) state.hasCelebrated = ce;
+  } catch(e) {}
+}
+
+function saveState() {
+  try {
+    localStorage.setItem(PREFIX + 'records', JSON.stringify(state.records));
+    localStorage.setItem(PREFIX + 'points', state.points);
+    localStorage.setItem(PREFIX + 'rewards', JSON.stringify(state.rewards));
+    localStorage.setItem(PREFIX + 'redemptions', JSON.stringify(state.redemptions));
+    if (state.password) localStorage.setItem(PREFIX + 'password', state.password);
+    localStorage.setItem(PREFIX + 'celebrated', state.hasCelebrated);
+  } catch(e) {
+    showToast('保存失败，存储空间可能已满');
+  }
+}
+
+/* ============ DATE UTILS ============ */
+function formatDate(d) {
+  var y = d.getFullYear();
+  var m = String(d.getMonth() + 1).padStart(2, '0');
+  var day = String(d.getDate()).padStart(2, '0');
+  return y + '-' + m + '-' + day;
+}
+
+function getToday() {
+  return formatDate(new Date());
+}
+
+function parseDate(str) {
+  var parts = str.split('-');
+  return new Date(parseInt(parts[0]), parseInt(parts[1]) - 1, parseInt(parts[2]));
+}
+
+function getPastDays(n) {
+  var days = [];
+  for (var i = n - 1; i >= 0; i--) {
+    var d = new Date();
+    d.setDate(d.getDate() - i);
+    days.push(formatDate(d));
+  }
+  return days;
+}
+
+function getThisWeek() {
+  var d = new Date();
+  var dayOfWeek = d.getDay() || 7;
+  var monday = new Date(d);
+  monday.setDate(d.getDate() - dayOfWeek + 1);
+  var days = [];
+  for (var i = 0; i < 7; i++) {
+    var day = new Date(monday);
+    day.setDate(monday.getDate() + i);
+    days.push({ date: formatDate(day), weekday: day.getDay() });
+  }
+  return days;
+}
+
+function getMonthDays(year, month) {
+  var daysInMonth = new Date(year, month + 1, 0).getDate();
+  var firstDay = new Date(year, month, 1).getDay();
+  var days = [];
+  for (var d = 1; d <= daysInMonth; d++) {
+    days.push({ date: year + '-' + String(month + 1).padStart(2, '0') + '-' + String(d).padStart(2, '0'), day: d });
+  }
+  return { days: days, firstDay: firstDay };
+}
+
+/* ============ EXAMPLE DATA ============ */
+function generateExampleData() {
+  var records = {};
+  var patterns = [
+    { offset: -5, done: ['math','words','write','english','reading','chinese','coding','sports'] },
+    { offset: -4, done: ['math','words','write','english','reading','chinese','sports'] },
+    { offset: -3, done: ['math','words','write','english','reading','chinese','coding','sports'] },
+    { offset: -2, done: ['math','words','english','reading','chinese','sports'] },
+    { offset: -1, done: ['math','english','reading'] }
+  ];
+  patterns.forEach(function(p) {
+    var d = new Date();
+    d.setDate(d.getDate() + p.offset);
+    var key = formatDate(d);
+    var dayRecord = {};
+    p.done.forEach(function(t) { dayRecord[t] = true; });
+    records[key] = dayRecord;
+  });
+  return records;
+}
+
+function calcPointsFromRecords(records) {
+  var total = 0;
+  Object.keys(records).forEach(function(date) {
+    var day = records[date];
+    TASKS.forEach(function(task) {
+      if (day[task.id]) total += task.points;
+    });
+  });
+  return total;
+}
+
+function isFirstLoad() {
+  return !localStorage.getItem(PREFIX + 'records');
+}
+
+/* ============ CHECK-IN LOGIC ============ */
+function toggleCheckIn(taskId) {
+  var today = getToday();
+  if (!state.records[today]) state.records[today] = {};
+  var wasDone = state.records[today][taskId];
+  state.records[today][taskId] = !wasDone;
+  var task = TASKS.find(function(t) { return t.id === taskId; });
+  if (!wasDone) {
+    state.points += task.points;
+    showToast('完成！' + task.name + ' +' + task.points + '⭐');
+    checkAllDoneCelebrate();
+  } else {
+    state.points = Math.max(0, state.points - task.points);
+    state.hasCelebrated = false;
+  }
+  saveState();
+  renderAll();
+}
+
+function getTodayRecord() {
+  return state.records[getToday()] || {};
+}
+
+function getYesterdayRecord() {
+  var d = new Date();
+  d.setDate(d.getDate() - 1);
+  return state.records[formatDate(d)] || {};
+}
+
+function isTaskDoneToday(taskId) {
+  return !!getTodayRecord()[taskId];
+}
+
+function getTodayDoneCount() {
+  var rec = getTodayRecord();
+  return TASKS.filter(function(t) { return rec[t.id]; }).length;
+}
+
+function checkAllDoneCelebrate() {
+  if (getTodayDoneCount() === TASKS.length && !state.hasCelebrated) {
+    state.hasCelebrated = getToday();
+    saveState();
+    launchConfetti();
+  }
+}
+
+function launchConfetti() {
+  var container = document.getElementById('confetti');
+  var colors = ['#FF6B6B','#4ECDC4','#45B7D1','#96CEB4','#DDA0DD','#F4A460','#6C5CE7','#FF8C42','#FDCB6E','#00B894'];
+  var html = '';
+  for (var i = 0; i < 50; i++) {
+    var left = Math.random() * 100;
+    var delay = Math.random() * 1.5;
+    var color = colors[Math.floor(Math.random() * colors.length)];
+    html += '<div class="confetti-piece" style="left:' + left + '%;animation-delay:' + delay + 's;background:' + color + ';width:' + (6 + Math.random() * 10) + 'px;height:' + (6 + Math.random() * 10) + 'px;"></div>';
+  }
+  container.innerHTML = html;
+  setTimeout(function() { container.innerHTML = ''; }, 3000);
+}
+
+/* ============ STATS ============ */
+function getCompletionRate(date) {
+  var day = state.records[date] || {};
+  var done = TASKS.filter(function(t) { return day[t.id]; }).length;
+  return Math.round((done / TASKS.length) * 100);
+}
+
+function getDoneCount(date) {
+  var day = state.records[date] || {};
+  return TASKS.filter(function(t) { return day[t.id]; }).length;
+}
+
+function getStreak() {
+  var streak = 0;
+  var today = new Date();
+  for (var i = 0; i < 366; i++) {
+    var d = new Date(today);
+    d.setDate(today.getDate() - i);
+    var key = formatDate(d);
+    if (getDoneCount(key) > 0) {
+      streak++;
+    } else if (i > 0) {
+      break;
+    }
+  }
+  return streak;
+}
+
+function getBestStreak() {
+  var dates = Object.keys(state.records).sort();
+  if (dates.length === 0) return 0;
+  var best = 0;
+  var current = 0;
+  for (var i = 0; i < dates.length; i++) {
+    if (getDoneCount(dates[i]) > 0) {
+      current++;
+      best = Math.max(best, current);
+    } else {
+      current = 0;
+    }
+    if (i < dates.length - 1) {
+      var currD = parseDate(dates[i]);
+      var nextD = parseDate(dates[i + 1]);
+      var diffDays = Math.round((nextD - currD) / (1000 * 60 * 60 * 24));
+      if (diffDays > 1) current = 0;
+    }
+  }
+  return best;
+}
+
+function getTotalCheckIns() {
+  var total = 0;
+  Object.keys(state.records).forEach(function(date) {
+    total += getDoneCount(date);
+  });
+  return total;
+}
+
+function getTotalDays() {
+  return Object.keys(state.records).filter(function(d) { return getDoneCount(d) > 0; }).length;
+}
+
+function getTaskCountInRange(taskId, dates) {
+  return dates.filter(function(d) {
+    var day = state.records[d] || {};
+    return !!day[taskId];
+  }).length;
+}
+
+function getPointsInRange(dates) {
+  return dates.reduce(function(sum, d) {
+    var day = state.records[d] || {};
+    TASKS.forEach(function(t) {
+      if (day[t.id]) sum += t.points;
+    });
+    return sum;
+  }, 0);
+}
+
+/* ============ RENDER ============ */
+function renderAll() {
+  renderHeader();
+  renderTodayArea();
+  renderCheckIn();
+  renderStats();
+  renderRewards();
+}
+
+function renderHeader() {
+  document.getElementById('dateDisplay').textContent = formatDate(new Date());
+  document.getElementById('pointsValue').textContent = state.points;
+
+  var toggleEl = document.getElementById('modeToggle');
+  if (state.mode === 'parent') {
+    toggleEl.textContent = '返回孩子模式';
+    toggleEl.classList.add('parent-active');
+  } else {
+    toggleEl.textContent = '家长模式';
+    toggleEl.classList.remove('parent-active');
+  }
+
+  var app = document.getElementById('app');
+  if (state.mode === 'parent') {
+    app.classList.add('mode-parent');
+  } else {
+    app.classList.remove('mode-parent');
+  }
+
+  var total = getTotalCheckIns();
+  var hint = document.getElementById('backupHint');
+  if (total >= 30) {
+    hint.style.display = 'inline';
+    hint.textContent = '数据已积累' + total + '条，建议导出备份';
+  } else {
+    hint.style.display = 'none';
+  }
+}
+
+function renderTodayArea() {
+  var today = getToday();
+  var todayRec = getTodayRecord();
+  var doneCount = getTodayDoneCount();
+  var total = TASKS.length;
+  var remaining = total - doneCount;
+
+  document.getElementById('todayDateLabel').textContent = '（' + today + '）';
+
+  var html = '';
+
+  // Overdue reminder
+  var yesterday = getYesterdayRecord();
+  var yesterdayDone = TASKS.filter(function(t) { return yesterday[t.id]; }).length;
+  var yesterdayRemaining = TASKS.filter(function(t) { return !yesterday[t.id]; });
+  if (yesterdayRemaining.length > 0 && Object.keys(yesterday).length > 0) {
+    var missNames = yesterdayRemaining.map(function(t) { return t.name; }).join('、');
+    html += '<div class="overdue-reminder">' +
+      '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#E17055" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>' +
+      '昨天还有' + yesterdayRemaining.length + '项没完成：' + missNames + '，今天继续加油！' +
+    '</div>';
+  }
+
+  // Progress
+  var percent = Math.round((doneCount / total) * 100);
+  html += '<div class="progress-summary">' +
+    '<div class="progress-bar-wrap"><div class="progress-bar-inner" style="width:' + percent + '%"></div></div>' +
+    '<span class="progress-text" style="color:' + (percent === 100 ? 'var(--success)' : 'var(--primary)') + '">' + doneCount + '/' + total + '</span>' +
+    '</div>';
+
+  if (remaining === 0) {
+    html += '<div class="today-done-all">' +
+      '<svg width="36" height="36" viewBox="0 0 36 36"><circle cx="18" cy="18" r="16" fill="#00B894" opacity="0.15"/><polyline points="10 18 16 24 26 12" fill="none" stroke="#00B894" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg>' +
+      '<div>太棒了！今天的任务全部完成啦！</div></div>';
+  } else {
+    var remTasks = TASKS.filter(function(t) { return !todayRec[t.id]; });
+    html += '<div class="today-remaining">';
+    remTasks.forEach(function(t) {
+      html += '<button class="chip" style="border-color:' + t.color + '40;background:' + t.bg + '" onclick="switchTab(\'checkin\');setTimeout(function(){document.getElementById(\'card-\'+t.id).scrollIntoView({behavior:\'smooth\',block:\'center\'})},100)">' +
+        taskIconSVG(t.id, 16) + t.name + '</button>';
+    });
+    html += '</div>';
+  }
+
+  document.getElementById('todayContent').innerHTML = html;
+}
+
+function taskIconSVG(taskId, size) {
+  size = size || 28;
+  var icons = {
+    math: '<svg viewBox="0 0 48 48" width="' + size + '" height="' + size + '"><rect x="12" y="6" width="24" height="36" rx="4" fill="none" stroke="currentColor" stroke-width="2.5"/><rect x="16" y="11" width="16" height="5" rx="2" fill="currentColor" opacity="0.2"/><circle cx="19" cy="24" r="2.2" fill="currentColor"/><circle cx="29" cy="24" r="2.2" fill="currentColor"/><circle cx="19" cy="32" r="2.2" fill="currentColor"/><circle cx="29" cy="32" r="2.2" fill="currentColor"/></svg>',
+    words: '<svg viewBox="0 0 48 48" width="' + size + '" height="' + size + '"><path d="M14 10c0 0-3 26 6 30s18-16 12-30" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/><circle cx="22" cy="20" r="12" fill="currentColor" opacity="0.12"/><text x="24" y="28" text-anchor="middle" font-size="14" font-weight="bold" fill="currentColor" font-family="sans-serif">ABC</text></svg>',
+    write: '<svg viewBox="0 0 48 48" width="' + size + '" height="' + size + '"><line x1="12" y1="40" x2="30" y2="12" stroke="currentColor" stroke-width="3" stroke-linecap="round"/><line x1="30" y1="12" x2="36" y2="8" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/><line x1="38" y1="14" x2="32" y2="22" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><circle cx="10" cy="42" r="3" fill="currentColor"/></svg>',
+    english: '<svg viewBox="0 0 48 48" width="' + size + '" height="' + size + '"><rect x="16" y="8" width="16" height="24" rx="3" fill="none" stroke="currentColor" stroke-width="2.5"/><rect x="20" y="12" width="8" height="16" rx="2" fill="currentColor" opacity="0.15"/><path d="M6 18c2 4 6 6 10 6s8-2 10-6" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/><path d="M26 28c-2 4-6 6-10 6s-8-2-10-6" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/></svg>',
+    reading: '<svg viewBox="0 0 48 48" width="' + size + '" height="' + size + '"><path d="M8 12h14l2 4h16v24H8V12z" fill="none" stroke="currentColor" stroke-width="2.5"/><line x1="12" y1="24" x2="36" y2="24" stroke="currentColor" stroke-width="2" opacity="0.4"/><line x1="12" y1="30" x2="30" y2="30" stroke="currentColor" stroke-width="2" opacity="0.4"/></svg>',
+    chinese: '<svg viewBox="0 0 48 48" width="' + size + '" height="' + size + '"><rect x="19" y="4" width="4" height="30" rx="2" fill="currentColor" opacity="0.5"/><rect x="25" y="4" width="4" height="30" rx="2" fill="currentColor" opacity="0.3"/><circle cx="13" cy="17" r="5" fill="none" stroke="currentColor" stroke-width="2.5"/><line x1="17" y1="20" x2="28" y2="7" stroke="currentColor" stroke-width="2"/></svg>',
+    coding: '<svg viewBox="0 0 48 48" width="' + size + '" height="' + size + '"><polyline points="18 16 10 24 18 32" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/><polyline points="30 16 38 24 30 32" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/><line x1="24" y1="12" x2="27" y2="36" stroke="currentColor" stroke-width="2" opacity="0.4"/></svg>',
+    sports: '<svg viewBox="0 0 48 48" width="' + size + '" height="' + size + '"><circle cx="20" cy="10" r="3" fill="currentColor"/><line x1="20" y1="13" x2="20" y2="22" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/><line x1="20" y1="16" x2="14" y2="28" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/><line x1="20" y1="16" x2="28" y2="26" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/><line x1="14" y1="28" x2="12" y2="40" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/><line x1="28" y1="26" x2="30" y2="40" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/></svg>'
+  };
+  return icons[taskId] || '';
+}
+
+function renderCheckIn() {
+  var todayRec = getTodayRecord();
+  var html = '<div class="checkin-grid">';
+  TASKS.forEach(function(t) {
+    var done = !!todayRec[t.id];
+    var cnt = done ? getTaskCountInRange(t.id, getPastDays(7)) : 0;
+    html += '<div class="checkin-card' + (done ? ' done' : '') + '" id="card-' + t.id + '" onclick="toggleCheckIn(\'' + t.id + '\')" style="border-color:' + (done ? 'var(--success)' : t.color + '20') + '">';
+    if (done) {
+      html += '<div class="check-mark"><svg width="24" height="24" viewBox="0 0 24 24"><circle cx="12" cy="12" r="11" fill="#00B894"/><polyline points="7 12 10.5 15.5 17 9" fill="none" stroke="#fff" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg></div>';
+    }
+    html += '<div class="card-icon" style="background:' + t.bg + ';color:' + t.color + '">' + taskIconSVG(t.id) + '</div>';
+    html += '<div class="card-name">' + t.name + '</div>';
+    if (done) {
+      html += '<div class="card-badge done-tag">已完成 +' + t.points + '⭐</div>';
+    } else {
+      html += '<div class="card-badge undone">去打卡</div>';
+    }
+    html += '</div>';
+  });
+  html += '</div>';
+
+  if (state.mode === 'parent') {
+    html += '<div style="margin-top:16px;text-align:center;">' +
+      '<button onclick="confirmClearData()" style="padding:12px 24px;border-radius:22px;border:2px solid var(--danger);background:transparent;color:var(--danger);font-size:14px;font-weight:600;cursor:pointer;font-family:var(--font);min-height:50px;">清空所有数据</button>' +
+      ' <button onclick="resetExampleData()" style="padding:12px 24px;border-radius:22px;border:2px solid var(--border);background:transparent;font-size:14px;font-weight:600;cursor:pointer;font-family:var(--font);margin-left:8px;min-height:50px;">恢复示例数据</button>' +
+      '</div>';
+  }
+
+  document.getElementById('tab-checkin').innerHTML = html;
+}
+
+function renderStats() {
+  var period = state.statsPeriod;
+  var html = '';
+
+  // Period selector
+  html += '<div class="stats-period-selector">';
+  ['today','week','month','summer'].forEach(function(p) {
+    var labels = { today: '今日', week: '本周', month: '本月', summer: '暑假全程' };
+    html += '<button class="' + (period === p ? 'active' : '') + '" onclick="setStatsPeriod(\'' + p + '\')">' + labels[p] + '</button>';
+  });
+  html += '</div>';
+
+  html += '<div class="stats-grid">';
+
+  if (period === 'today') {
+    var today = getToday();
+    var doneCount = getTodayDoneCount();
+    var total = TASKS.length;
+    var percent = Math.round((doneCount / total) * 100);
+    var todayRec = getTodayRecord();
+    var points = TASKS.reduce(function(s, t) { return todayRec[t.id] ? s + t.points : s; }, 0);
+
+    html += '<div class="summary-row" style="grid-column:1 / -1;">' +
+      '<div class="summary-item"><div class="summary-num">' + doneCount + '</div><div class="summary-label">已完成</div></div>' +
+      '<div class="summary-item"><div class="summary-num" style="color:var(--accent)">' + percent + '%</div><div class="summary-label">完成率</div></div>' +
+      '<div class="summary-item"><div class="summary-num" style="color:var(--warning)">+' + points + '</div><div class="summary-label">今日获分</div></div>' +
+      '</div>';
+
+    html += '<div class="today-cards">';
+    // Progress ring
+    html += '<div class="stats-card today-ring-card">';
+    html += '<div class="progress-ring-wrap">' + renderProgressRing(percent) + '<div class="count-label">' + doneCount + ' / ' + total + '</div></div>';
+    html += '</div>';
+
+    // Today's task list
+    html += '<div class="stats-card"><h3>完成任务</h3>';
+    TASKS.forEach(function(t) {
+      var done = !!todayRec[t.id];
+      html += '<div style="display:flex;align-items:center;gap:8px;padding:6px 0;font-size:13px;">' +
+        '<span style="color:' + t.color + '">' + taskIconSVG(t.id, 18) + '</span>' +
+        '<span style="flex:1;font-weight:500;">' + t.name + '</span>' +
+        '<span style="font-weight:600;color:' + (done ? 'var(--success)' : 'var(--text-lighter)') + '">' + (done ? '完成 +' + t.points + '⭐' : '未完成') + '</span>' +
+        '</div>';
+    });
+    html += '</div>';
+    html += '</div>';
+
+  } else if (period === 'week') {
+    var week = getThisWeek();
+    var weekDates = week.map(function(w) { return w.date; });
+    var weekDone = weekDates.reduce(function(s, d) { return s + getDoneCount(d); }, 0);
+    var weekTotal = weekDates.length * TASKS.length;
+    var weekPercent = weekTotal > 0 ? Math.round((weekDone / weekTotal) * 100) : 0;
+    var weekActiveDays = weekDates.filter(function(d) { return getDoneCount(d) > 0; }).length;
+    var weekPoints = getPointsInRange(weekDates);
+
+    html += '<div class="summary-row">' +
+      '<div class="summary-item"><div class="summary-num">' + weekActiveDays + '</div><div class="summary-label">打卡天数</div></div>' +
+      '<div class="summary-item"><div class="summary-num" style="color:var(--accent)">' + weekDone + '</div><div class="summary-label">完成任务</div></div>' +
+      '<div class="summary-item"><div class="summary-num" style="color:var(--warning)">+' + weekPoints + '</div><div class="summary-label">累计获得</div></div>' +
+      '</div>';
+
+    // Weekly matrix
+    html += '<div class="stats-card full-width"><h3>本周打卡矩阵</h3>';
+    html += renderWeekMatrix(weekDates);
+    html += '</div>';
+
+    // Weekly bar chart
+    html += '<div class="stats-card full-width"><h3>本周各科目完成次数</h3>';
+    html += renderBarChart(weekDates);
+    html += '</div>';
+
+  } else if (period === 'month') {
+    var now = new Date();
+    var monthData = getMonthDays(now.getFullYear(), now.getMonth());
+    var monthDates = monthData.days.map(function(d) { return d.date; });
+    var monthDone = monthDates.reduce(function(s, d) { return s + getDoneCount(d); }, 0);
+    var monthTotal = monthDates.length * TASKS.length;
+    var monthPercent = monthTotal > 0 ? Math.round((monthDone / monthTotal) * 100) : 0;
+    var monthActiveDays = monthDates.filter(function(d) { return getDoneCount(d) > 0; }).length;
+    var monthPoints = getPointsInRange(monthDates);
+
+    html += '<div class="summary-row">' +
+      '<div class="summary-item"><div class="summary-num">' + monthActiveDays + '</div><div class="summary-label">打卡天数</div></div>' +
+      '<div class="summary-item"><div class="summary-num" style="color:var(--accent)">' + monthDone + '</div><div class="summary-label">完成任务</div></div>' +
+      '<div class="summary-item"><div class="summary-num" style="color:var(--warning)">+' + monthPoints + '</div><div class="summary-label">累计获得</div></div>' +
+      '</div>';
+
+    // Monthly heatmap
+    html += '<div class="stats-card full-width"><h3>' + now.getFullYear() + '年' + (now.getMonth() + 1) + '月 打卡热力图</h3>';
+    html += renderHeatmap(now.getFullYear(), now.getMonth());
+    html += '</div>';
+
+    // Monthly bar chart
+    html += '<div class="stats-card full-width"><h3>本月各科目完成次数</h3>';
+    html += renderBarChart(monthDates);
+    html += '</div>';
+
+  } else if (period === 'summer') {
+    var allDates = [];
+    var sd = new Date(2026, 6, 1); // July 1
+    var ed = new Date(); // today
+    for (var d = new Date(sd); d <= ed; d.setDate(d.getDate() + 1)) {
+      allDates.push(formatDate(d));
+    }
+    var summerDone = allDates.reduce(function(s, d) { return s + getDoneCount(d); }, 0);
+    var summerDays = allDates.filter(function(d) { return getDoneCount(d) > 0; }).length;
+    var summerMaxDays = allDates.length;
+    var avgPerDay = summerDays > 0 ? (summerDone / summerDays).toFixed(1) : '0.0';
+    var summerPoints = getPointsInRange(allDates);
+    var streak = getStreak();
+    var bestStreak = getBestStreak();
+
+    html += '<div class="summary-row">' +
+      '<div class="summary-item"><div class="summary-num">' + summerDays + '</div><div class="summary-label">打卡天数 / ' + summerMaxDays + '</div></div>' +
+      '<div class="summary-item"><div class="summary-num" style="color:var(--accent)">' + summerDone + '</div><div class="summary-label">总完成任务</div></div>' +
+      '<div class="summary-item"><div class="summary-num" style="color:var(--warning)">' + state.points + '</div><div class="summary-label">剩余积分</div></div>' +
+      '</div>';
+
+    var summerRate = summerMaxDays > 0 ? Math.round((summerDone / summerMaxDays) * 100) : 0;
+    html += '<div class="summary-row">' +
+      '<div class="summary-item"><div class="summary-num" style="color:var(--accent)">+' + summerPoints + '</div><div class="summary-label">累计获得</div></div>' +
+      '<div class="summary-item"><div class="summary-num" style="color:var(--warning)">' + avgPerDay + '</div><div class="summary-label">日均完成项</div></div>' +
+      '<div class="summary-item"><div class="summary-num" style="color:var(--primary)">' + summerRate + '%</div><div class="summary-label">打卡覆盖率</div></div>' +
+      '</div>';
+
+    // Overall bar chart
+    html += '<div class="stats-card full-width"><h3>暑假各科目总完成次数</h3>';
+    html += renderBarChart(allDates);
+    html += '</div>';
+  }
+
+  // Always show streak card (now inside the unified grid)
+  var streak = getStreak();
+  var bestStreak = getBestStreak();
+  html += '<div class="stats-card" style="text-align:center;">' +
+    '<div style="font-size:13px;font-weight:600;color:var(--text-light);margin-bottom:4px;">连续打卡</div>' +
+    '<div style="font-size:36px;font-weight:800;color:var(--danger);display:flex;align-items:center;justify-content:center;gap:6px;">' +
+    '<svg width="28" height="28" viewBox="0 0 28 28"><path d="M14 2c-2 6-6 8-6 12 0 3.3 2.7 6 6 6s6-2.7 6-6c0-4-4-6-6-12z" fill="#FF7675"/><path d="M14 2c2 6 6 8 6 12 0 3.3-2.7 6-6 6s-6-2.7-6-6c0-4 4-6 6-12z" fill="#FDCB6E" opacity="0.5"/></svg>' +
+    streak + ' 天</div></div>' +
+    '<div class="stats-card" style="text-align:center;">' +
+    '<div style="font-size:13px;font-weight:600;color:var(--text-light);margin-bottom:4px;">最佳记录</div>' +
+    '<div style="font-size:36px;font-weight:800;color:var(--primary);display:flex;align-items:center;justify-content:center;gap:6px;">' +
+    '<svg width="28" height="28" viewBox="0 0 28 28"><polygon points="14,2 17,10 25,11 19,17 20,25 14,21 8,25 9,17 3,11 11,10" fill="#6C5CE7"/></svg>' +
+    bestStreak + ' 天</div></div>';
+
+  html += '</div>'; // close .stats-grid
+
+  // Parent mode: extra controls
+  if (state.mode === 'parent') {
+    html += '<div style="text-align:center;margin-top:14px;" class="parent-only">' +
+      '<button onclick="openEditHistory()" style="padding:12px 24px;border-radius:22px;border:2px solid var(--primary);background:var(--card);color:var(--primary);font-size:14px;font-weight:700;cursor:pointer;font-family:var(--font);min-height:50px;margin-right:8px;">修改历史打卡</button>' +
+      '<button onclick="exportCSV()" style="padding:12px 24px;border-radius:22px;border:2px solid var(--border);background:var(--card);font-size:14px;font-weight:600;cursor:pointer;font-family:var(--font);min-height:50px;">导出CSV报表</button>' +
+      '</div>';
+  }
+
+  document.getElementById('tab-stats').innerHTML = html;
+}
+
+function renderProgressRing(percent) {
+  var size = 130;
+  var radius = 52;
+  var circumference = 2 * Math.PI * radius;
+  var offset = circumference - (percent / 100) * circumference;
+  return '<svg width="' + size + '" height="' + size + '" viewBox="0 0 ' + size + ' ' + size + '">' +
+    '<circle cx="' + (size/2) + '" cy="' + (size/2) + '" r="' + radius + '" fill="none" stroke="#eee" stroke-width="10"/>' +
+    '<circle cx="' + (size/2) + '" cy="' + (size/2) + '" r="' + radius + '" fill="none" stroke="url(#grad)" stroke-width="10" stroke-linecap="round"' +
+    ' stroke-dasharray="' + circumference + '" stroke-dashoffset="' + offset + '" transform="rotate(-90 ' + (size/2) + ' ' + (size/2) + ')"/>' +
+    '<defs><linearGradient id="grad" x1="0%" y1="0%" x2="100%" y2="100%">' +
+    '<stop offset="0%" stop-color="#6C5CE7"/><stop offset="100%" stop-color="#00CEC9"/></linearGradient></defs>' +
+    '<text x="' + (size/2) + '" y="' + (size/2) + '" text-anchor="middle" dominant-baseline="central" font-size="28" font-weight="800" fill="#2D3436" font-family="' + getComputedStyle(document.body).fontFamily + '">' + percent + '%</text>' +
+    '</svg>';
+}
+
+function renderWeekMatrix(dates) {
+  var weekdays = ['一', '二', '三', '四', '五', '六', '日'];
+  var dayMap = {};
+  dates.forEach(function(d) {
+    dayMap[new Date(parseDate(d)).getDay() || 7] = d;
+  });
+
+  var html = '<table class="week-matrix"><thead><tr><th></th>';
+  for (var i = 1; i <= 7; i++) {
+    html += '<th>' + weekdays[i-1] + '</th>';
+  }
+  html += '</tr></thead><tbody>';
+
+  TASKS.forEach(function(t) {
+    html += '<tr><td class="matrix-label">' + t.name + '</td>';
+    for (var i = 1; i <= 7; i++) {
+      var date = dayMap[i];
+      var done = false;
+      if (date) {
+        var dayRec = state.records[date] || {};
+        done = !!dayRec[t.id];
+      }
+      html += '<td><div class="matrix-cell ' + (done ? 'done' : 'undone') + '">' + (done ? '<svg width="14" height="14" viewBox="0 0 14 14"><polyline points="3 7 6 10 11 4" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round"/></svg>' : '') + '</div></td>';
+    }
+    html += '</tr>';
+  });
+
+  html += '</tbody></table>';
+  return html;
+}
+
+function renderBarChart(dates) {
+  var maxCount = 0;
+  var counts = [];
+  TASKS.forEach(function(t) {
+    var cnt = getTaskCountInRange(t.id, dates);
+    counts.push({ task: t, count: cnt });
+    maxCount = Math.max(maxCount, cnt);
+  });
+  maxCount = Math.max(maxCount, 1);
+
+  var html = '<div class="bar-chart">';
+  counts.forEach(function(item) {
+    var pct = Math.round((item.count / maxCount) * 100);
+    html += '<div class="bar-row">' +
+      '<div class="bar-label">' + item.task.name + '</div>' +
+      '<div class="bar-track"><div class="bar-inner" style="width:' + pct + '%;background:' + item.task.color + '">' + (pct > 20 ? item.count : '') + '</div></div>' +
+      '<div class="bar-value">' + item.count + '</div>' +
+      '</div>';
+  });
+  html += '</div>';
+  return html;
+}
+
+function renderHeatmap(year, month) {
+  var monthData = getMonthDays(year, month);
+  var weekdays = ['日', '一', '二', '三', '四', '五', '六'];
+
+  var html = '<div class="heatmap-grid">';
+  weekdays.forEach(function(d) {
+    html += '<div class="heatmap-header">' + d + '</div>';
+  });
+
+  for (var i = 0; i < monthData.firstDay; i++) {
+    html += '<div class="heatmap-cell empty"></div>';
+  }
+
+  monthData.days.forEach(function(item) {
+    if (parseDate(item.date) > new Date()) {
+      html += '<div class="heatmap-cell empty"></div>';
+      return;
+    }
+    var done = getDoneCount(item.date);
+    var pct = done / TASKS.length;
+    var cls = 'heatmap-level-0';
+    if (pct > 0 && pct < 0.3) cls = 'heatmap-level-1';
+    else if (pct >= 0.3 && pct < 0.5) cls = 'heatmap-level-2';
+    else if (pct >= 0.5 && pct < 0.8) cls = 'heatmap-level-3';
+    else if (pct >= 0.8) cls = 'heatmap-level-4';
+    html += '<div class="heatmap-cell ' + cls + '" title="' + item.date + ': ' + done + '/' + TASKS.length + '">' + item.day + '</div>';
+  });
+
+  html += '</div>';
+  return html;
+}
+
+function renderRewards() {
+  var html = '';
+  html += '<div class="rewards-header"><span class="rewards-points">当前积分：' + state.points + ' ⭐</span></div>';
+
+  // Redeem form
+  html += '<div class="redeem-form-card">';
+  html += '<h3>积分兑换</h3>';
+  html += '<div class="redeem-form-row">';
+  html += '<div class="field"><label>兑换什么？</label><input id="redeemWhat" type="text" placeholder="比如：看一集动画片" style="font-size:16px;"></div>';
+  html += '<div class="field"><label>需要多少积分？</label><input id="redeemCost" type="number" placeholder="10" min="1" value="10" style="width:100%;font-size:16px;"></div>';
+  html += '<button class="redeem-submit-btn" onclick="doRedeemSimple()">确认兑换</button>';
+  html += '</div>';
+  html += '</div>';
+
+  // Redemption history
+  var redemptions = state.redemptions || [];
+  html += '<div class="redemption-history"><h3>兑换记录（共' + redemptions.length + '条）</h3>';
+  if (redemptions.length === 0) {
+    html += '<div style="text-align:center;padding:20px;color:var(--text-lighter);font-size:13px;">还没有兑换记录</div>';
+  } else {
+    redemptions.slice().reverse().slice(0, 30).forEach(function(r, idx) {
+      html += '<div class="redemption-item">' +
+        '<span class="red-date">' + r.date + '</span>' +
+        '<span class="red-name">' + r.name + '</span>' +
+        '<span class="red-cost">-' + r.cost + '⭐</span>' +
+        (state.mode === 'parent' ? '<button class="red-del parent-only" onclick="deleteRedemption(' + (redemptions.length - 1 - idx) + ')" style="display:' + (state.mode === 'parent' ? 'block' : 'none') + '">删除</button>' : '') +
+        '</div>';
+    });
+  }
+  html += '</div>';
+
+  document.getElementById('tab-rewards').innerHTML = html;
+}
+
+/* ============ EVENTS ============ */
+function switchTab(tab) {
+  state.currentTab = tab;
+  document.querySelectorAll('.tab-panel').forEach(function(el) { el.classList.remove('active'); });
+  document.getElementById('tab-' + tab).classList.add('active');
+
+  document.querySelectorAll('.tab-btn').forEach(function(el) { el.classList.remove('active'); });
+  var pcBtn = document.querySelector('.tab-btn[data-tab="' + tab + '"]');
+  if (pcBtn) pcBtn.classList.add('active');
+
+  document.querySelectorAll('.bottom-btn').forEach(function(el) { el.classList.remove('active'); });
+  var mbBtn = document.querySelector('.bottom-btn[data-tab="' + tab + '"]');
+  if (mbBtn) mbBtn.classList.add('active');
+
+  renderAll();
+}
+
+function setStatsPeriod(period) {
+  state.statsPeriod = period;
+  renderStats();
+}
+
+function toggleMode() {
+  if (state.mode === 'child') {
+    // Switch to parent mode - need password
+    if (!state.password) {
+      showSetPasswordModal();
+    } else {
+      showEnterPasswordModal();
+    }
+  } else {
+    state.mode = 'child';
+    document.getElementById('app').classList.remove('mode-parent');
+    renderAll();
+  }
+}
+
+function showSetPasswordModal() {
+  var html = '<h3>设置家长密码</h3><p>请设置4位数字密码，用于进入家长模式</p>' +
+    '<div class="pwd-input-group">' +
+    '<input type="password" maxlength="1" pattern="[0-9]" inputmode="numeric" oninput="pwdInput(this,1)" id="pwd1">' +
+    '<input type="password" maxlength="1" pattern="[0-9]" inputmode="numeric" oninput="pwdInput(this,2)" id="pwd2">' +
+    '<input type="password" maxlength="1" pattern="[0-9]" inputmode="numeric" oninput="pwdInput(this,3)" id="pwd3">' +
+    '<input type="password" maxlength="1" pattern="[0-9]" inputmode="numeric" oninput="pwdInput(this,4)" id="pwd4">' +
+    '</div>' +
+    '<p style="font-size:12px;color:var(--text-lighter)">注意：密码存储在本地浏览器，不是真正的加密保护，仅用于防止孩子误操作。</p>' +
+    '<div class="modal-buttons">' +
+    '<button class="modal-btn cancel" onclick="hideModal()">取消</button>' +
+    '<button class="modal-btn primary" onclick="onSetPassword()">确认设置</button>' +
+    '</div>';
+  document.getElementById('modalContent').innerHTML = html;
+  showModal();
+  setTimeout(function() { var el = document.getElementById('pwd1'); if (el) el.focus(); }, 200);
+}
+
+function showEnterPasswordModal() {
+  var html = '<h3>请输入家长密码</h3>' +
+    '<div class="pwd-input-group">' +
+    '<input type="password" maxlength="1" pattern="[0-9]" inputmode="numeric" oninput="pwdInput(this,1)" id="pwd1">' +
+    '<input type="password" maxlength="1" pattern="[0-9]" inputmode="numeric" oninput="pwdInput(this,2)" id="pwd2">' +
+    '<input type="password" maxlength="1" pattern="[0-9]" inputmode="numeric" oninput="pwdInput(this,3)" id="pwd3">' +
+    '<input type="password" maxlength="1" pattern="[0-9]" inputmode="numeric" oninput="pwdInput(this,4)" id="pwd4">' +
+    '</div>' +
+    '<div class="modal-buttons">' +
+    '<button class="modal-btn cancel" onclick="hideModal()">取消</button>' +
+    '<button class="modal-btn primary" onclick="onEnterPassword()">确认</button>' +
+    '</div>';
+  document.getElementById('modalContent').innerHTML = html;
+  showModal();
+  setTimeout(function() { var el = document.getElementById('pwd1'); if (el) el.focus(); }, 200);
+}
+
+function pwdInput(input, next) {
+  if (input.value && next < 4) {
+    var nextEl = document.getElementById('pwd' + (next + 1));
+    if (nextEl) nextEl.focus();
+  }
+}
+
+function getPasswordInput() {
+  var pwd = '';
+  for (var i = 1; i <= 4; i++) {
+    var el = document.getElementById('pwd' + i);
+    pwd += el ? el.value : '';
+  }
+  return pwd;
+}
+
+function onSetPassword() {
+  var pwd = getPasswordInput();
+  if (pwd.length !== 4 || !/^\d{4}$/.test(pwd)) {
+    showToast('请输入4位数字密码');
+    return;
+  }
+  state.password = pwd;
+  state.mode = 'parent';
+  saveState();
+  hideModal();
+  renderAll();
+}
+
+function onEnterPassword() {
+  var pwd = getPasswordInput();
+  if (pwd === state.password) {
+    state.mode = 'parent';
+    hideModal();
+    renderAll();
+  } else {
+    showToast('密码错误，请重试');
+    for (var i = 1; i <= 4; i++) {
+      var el = document.getElementById('pwd' + i);
+      if (el) el.value = '';
+    }
+    var el1 = document.getElementById('pwd1');
+    if (el1) el1.focus();
+  }
+}
+
+function doRedeemSimple() {
+  var whatEl = document.getElementById('redeemWhat');
+  var costEl = document.getElementById('redeemCost');
+  var what = whatEl ? whatEl.value.trim() : '';
+  var cost = parseInt(costEl ? costEl.value : 10) || 10;
+  if (!what) { showToast('请输入想兑换什么'); return; }
+  if (cost <= 0) { showToast('请输入有效的积分数量'); return; }
+  if (state.points < cost) { showToast('积分不足！当前只有 ' + state.points + '⭐'); return; }
+  state.points -= cost;
+  state.redemptions.push({ name: what, cost: cost, date: getToday() });
+  saveState();
+  showToast('兑换成功！' + what + ' -' + cost + '⭐');
+  renderAll();
+}
+
+function deleteRedemption(idx) {
+  if (idx >= 0 && idx < state.redemptions.length) {
+    var item = state.redemptions[idx];
+    state.redemptions.splice(idx, 1);
+    saveState();
+    showToast('已删除：' + item.name);
+    renderAll();
+  }
+}
+
+function confirmClearData() {
+  var html = '<h3>清空所有数据</h3><p style="color:var(--danger);font-weight:600;">⚠️ 此操作不可恢复！所有打卡记录、积分和兑换记录将被永久删除。</p>' +
+    '<div class="modal-buttons">' +
+    '<button class="modal-btn cancel" onclick="hideModal()">取消</button>' +
+    '<button class="modal-btn confirm" onclick="doClearData()">确认清空</button>' +
+    '</div>';
+  document.getElementById('modalContent').innerHTML = html;
+  showModal();
+}
+
+function doClearData() {
+  state.records = {};
+  state.points = 0;
+  state.redemptions = [];
+  state.hasCelebrated = false;
+  saveState();
+  hideModal();
+  showToast('数据已清空');
+  renderAll();
+}
+
+function resetExampleData() {
+  state.records = generateExampleData();
+  state.points = calcPointsFromRecords(state.records);
+  state.redemptions = [];
+  state.hasCelebrated = false;
+  saveState();
+  showToast('已恢复示例数据');
+  renderAll();
+}
+
+/* ============ EXPORT / IMPORT ============ */
+function exportData() {
+  var data = {
+    version: '1.0',
+    exportDate: getToday(),
+    records: state.records,
+    points: state.points,
+    rewards: state.rewards,
+    redemptions: state.redemptions
+  };
+  var json = JSON.stringify(data, null, 2);
+  var blob = new Blob([json], { type: 'application/json' });
+  var url = URL.createObjectURL(blob);
+  var a = document.createElement('a');
+  a.href = url;
+  a.download = 'summer-study-backup-' + getToday() + '.json';
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+  showToast('备份已导出！');
+}
+
+function importData(event) {
+  var file = event.target.files[0];
+  if (!file) return;
+  var reader = new FileReader();
+  reader.onload = function(e) {
+    try {
+      var data = JSON.parse(e.target.result);
+      if (!data.records) { showToast('无效的备份文件'); return; }
+      if (Object.keys(data.records).length > 2000) { showToast('数据条数过多，请分批导入'); return; }
+
+      var html = '<h3>导入数据</h3><p>即将导入 ' + Object.keys(data.records).length + ' 天的打卡记录。这会<strong>替换</strong>当前所有数据，是否继续？</p>' +
+        '<div class="modal-buttons">' +
+        '<button class="modal-btn cancel" onclick="hideModal()">取消</button>' +
+        '<button class="modal-btn primary" onclick="doImportData(\'' + encodeURIComponent(JSON.stringify(data)) + '\')">确认导入</button>' +
+        '</div>';
+      document.getElementById('modalContent').innerHTML = html;
+      showModal();
+    } catch(err) { showToast('文件解析失败，请确认是有效的JSON文件'); }
+  };
+  reader.readAsText(file);
+  event.target.value = '';
+}
+
+function doImportData(encoded) {
+  var data = JSON.parse(decodeURIComponent(encoded));
+  state.records = data.records || {};
+  state.points = data.points || 0;
+  state.rewards = data.rewards || [];
+  state.redemptions = data.redemptions || [];
+  state.hasCelebrated = false;
+  saveState();
+  hideModal();
+  showToast('导入成功！共' + Object.keys(state.records).length + '天记录');
+  renderAll();
+}
+
+function exportCSV() {
+  var allDates = Object.keys(state.records).sort();
+  if (allDates.length === 0) { showToast('没有数据可导出'); return; }
+  var header = '日期,' + TASKS.map(function(t) { return t.name; }).join(',') + ',完成数,积分\n';
+  var rows = '';
+  allDates.forEach(function(date) {
+    var day = state.records[date];
+    var doneCount = getDoneCount(date);
+    var points = TASKS.reduce(function(s, t) { return day[t.id] ? s + t.points : s; }, 0);
+    var cells = TASKS.map(function(t) { return day[t.id] ? '1' : '0'; });
+    rows += date + ',' + cells.join(',') + ',' + doneCount + ',' + points + '\n';
+  });
+  var csv = '\uFEFF' + header + rows;
+  var blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+  var url = URL.createObjectURL(blob);
+  var a = document.createElement('a');
+  a.href = url;
+  a.download = 'summer-study-export-' + getToday() + '.csv';
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+  showToast('CSV已导出！');
+}
+
+/* ============ UI UTILS ============ */
+function showModal() {
+  document.getElementById('modalOverlay').classList.add('show');
+}
+
+function hideModal() {
+  document.getElementById('modalOverlay').classList.remove('show');
+}
+
+var toastTimer;
+function showToast(msg) {
+  var el = document.getElementById('toast');
+  el.textContent = msg;
+  el.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(function() { el.classList.remove('show'); }, 2500);
+}
+
+// Close modal on overlay click
+document.getElementById('modalOverlay').addEventListener('click', function(e) {
+  if (e.target === this) hideModal();
+});
+
+/* ============ EDIT HISTORY (parent only) ============ */
+var historyEditDate = null;
+var historyEditTemp = null;
+
+function openEditHistory() {
+  historyEditDate = null;
+  historyEditTemp = null;
+  showEditHistoryModal();
+}
+
+function showEditHistoryModal() {
+  if (!historyEditDate) {
+    var y = new Date();
+    y.setDate(y.getDate() - 1);
+    historyEditDate = formatDate(y);
+  }
+  if (!historyEditTemp) {
+    var rec = state.records[historyEditDate] || {};
+    historyEditTemp = {};
+    TASKS.forEach(function(t) { historyEditTemp[t.id] = !!rec[t.id]; });
+  }
+  var doneCount = TASKS.filter(function(t) { return historyEditTemp[t.id]; }).length;
+
+  var html = '<h3>修改历史打卡</h3>';
+  html += '<div style="margin-bottom:14px;"><label style="display:block;font-size:13px;font-weight:600;margin-bottom:6px;color:var(--text-light);">选择日期</label>' +
+    '<input id="historyDate" type="date" value="' + historyEditDate + '" max="' + getToday() + '" onchange="selectHistoryDate()" style="width:100%;padding:12px;border:1.5px solid var(--border);border-radius:10px;font-size:16px;font-family:var(--font);box-sizing:border-box;background:#fff;"></div>';
+  html += '<div style="font-size:13px;font-weight:700;color:var(--text-light);margin-bottom:10px;">已完成 ' + doneCount + ' / ' + TASKS.length + ' 项</div>';
+  html += renderHistoryToggles();
+  html += '<div class="modal-buttons" style="margin-top:18px;">' +
+    '<button class="modal-btn cancel" onclick="hideModal()">取消</button>' +
+    '<button class="modal-btn primary" onclick="saveHistoryEdit()">保存修改</button>' +
+    '</div>';
+
+  document.getElementById('modalContent').innerHTML = html;
+  showModal();
+}
+
+function renderHistoryToggles() {
+  var html = '';
+  TASKS.forEach(function(t) {
+    var done = !!historyEditTemp[t.id];
+    html += '<button type="button" onclick="toggleHistoryTask(\'' + t.id + '\')" style="display:flex;align-items:center;gap:10px;width:100%;padding:12px 14px;margin-bottom:8px;border-radius:12px;border:2px solid ' + (done ? t.color : 'var(--border)') + ';background:' + (done ? t.bg : 'var(--card)') + ';cursor:pointer;font-family:var(--font);font-size:15px;font-weight:700;min-height:50px;text-align:left;color:' + (done ? t.color : 'var(--text)') + ';">' +
+      '<span style="width:24px;height:24px;border-radius:50%;background:' + (done ? t.color : '#e0e0e0') + ';display:flex;align-items:center;justify-content:center;flex-shrink:0;">' + (done ? '<svg width="14" height="14" viewBox="0 0 14 14"><polyline points="3 7 6 10 11 4" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round"/></svg>' : '') + '</span>' +
+      '<span style="flex:1;">' + t.name + '</span>' +
+      '<span style="font-size:13px;font-weight:600;color:' + (done ? t.color : 'var(--text-lighter)') + ';">' + (done ? '已完成' : '未完成') + '</span>' +
+      '</button>';
+  });
+  return html;
+}
+
+function toggleHistoryTask(taskId) {
+  historyEditTemp[taskId] = !historyEditTemp[taskId];
+  showEditHistoryModal();
+}
+
+function selectHistoryDate() {
+  var el = document.getElementById('historyDate');
+  historyEditDate = el ? el.value : getToday();
+  var rec = state.records[historyEditDate] || {};
+  historyEditTemp = {};
+  TASKS.forEach(function(t) { historyEditTemp[t.id] = !!rec[t.id]; });
+  showEditHistoryModal();
+}
+
+function saveHistoryEdit() {
+  var anyDone = TASKS.some(function(t) { return historyEditTemp[t.id]; });
+  if (anyDone) {
+    state.records[historyEditDate] = JSON.parse(JSON.stringify(historyEditTemp));
+  } else {
+    delete state.records[historyEditDate];
+  }
+  state.points = calcPointsFromRecords(state.records);
+  saveState();
+  hideModal();
+  showToast('已更新 ' + historyEditDate + ' 的打卡记录');
+  renderAll();
+}
+
+/* ============ INIT ============ */
+function init() {
+  loadState();
+  if (isFirstLoad()) {
+    state.records = generateExampleData();
+    state.points = calcPointsFromRecords(state.records);
+    saveState();
+  }
+  renderAll();
+}
+
+init();
+</script>
 </body>
 </html>

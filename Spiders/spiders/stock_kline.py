@@ -701,6 +701,34 @@ class StockKlineSpider:
                         batch[f] = code
                     return batch
 
+                def _is_retryable_skip(reason):
+                    """skip 结果是否为可重试的瞬时失败（K线拉取/超时/取消/卡死）。
+
+                    流动性不足、换手率不足、数据量不足N天、估值过滤及非瞬时异常都属
+                    确定性/过滤类 skip，重试无意义，不应进入重试队列。
+                    """
+                    reason = reason or ''
+                    if reason in ('K线拉取失败', '超时', '已取消'):
+                        return True
+                    if '卡死' in reason:
+                        return True
+                    return False
+
+                def _classify_retry_outcome(res):
+                    """把单只股票的重试结果归类为四类之一：
+                    - 'success'：拿到数据且完整跑完计算（无论有无信号）
+                    - 'filtered'：被流动性/数据量/估值等确定性门槛挡掉，不重试
+                    - 'retry'：真正的瞬时拉取失败（K线拉取/超时/取消/卡死），下轮继续重试
+                    - 'failed'：计算出错（带 error 字段），按“出错了才算失败”定义为失败，不重试
+                    """
+                    if res.get('error'):
+                        return 'failed'
+                    if res.get('skip'):
+                        if _is_retryable_skip(res.get('reason')):
+                            return 'retry'
+                        return 'filtered'
+                    return 'success'
+
                 def _handle_result(res, code):
                     """处理单个结果（写文件/写库/更新极值等 I/O），返回是否应加入重试集"""
                     try:
@@ -709,10 +737,8 @@ class StockKlineSpider:
                         self.logger.error(f"处理 {code} 流水线结果出错: {e}")
 
                     should_retry = False
-                    if res.get('skip'):
-                        reason = res.get('reason', '')
-                        if reason in ('K线拉取失败', '超时', '已取消') or '卡死' in reason:
-                            should_retry = True
+                    if res.get('skip') and _is_retryable_skip(res.get('reason')):
+                        should_retry = True
 
                     df = res.get('df')
                     if df is not None and hasattr(df, "empty") and not df.empty:
@@ -886,6 +912,9 @@ class StockKlineSpider:
                                 }
                                 retry_total = len(retry_futures)
                                 retry_done = 0
+                                retry_success = 0
+                                retry_filtered = 0
+                                retry_failed = 0
                                 done_futures = set()
                                 # 动态计算超时：每只股票 60 秒，最少 300 秒
                                 retry_batch_timeout = max(300, int(retry_total / retry_workers * 60))
@@ -903,6 +932,7 @@ class StockKlineSpider:
                                                 'stock_name': code,
                                                 'skip': True,
                                                 'reason': str(e),
+                                                'error': str(e),
                                             }
 
                                         try:
@@ -917,11 +947,18 @@ class StockKlineSpider:
                                         else:
                                             results[code] = (code, retry_res.get('stock_name') or code, None)
 
-                                        if retry_res.get('skip'):
+                                        outcome = _classify_retry_outcome(retry_res)
+                                        if outcome == 'retry':
                                             next_remaining.add(code)
+                                        elif outcome == 'failed':
+                                            retry_failed += 1
+                                        else:  # success（含 filtered：拿到数据即算成功）
+                                            retry_success += 1
+                                            if outcome == 'filtered':
+                                                retry_filtered += 1
 
                                         if retry_done == 1 or retry_done % 50 == 0 or retry_done == retry_total:
-                                            self.logger.warning(f"重试进度: {retry_done}/{retry_total} 只")
+                                            self.logger.warning(f"重试进度: {retry_done}/{retry_total} 只，成功 {retry_success}（含过滤 {retry_filtered}），失败 {retry_failed}")
                                 except TimeoutError:
                                     # 超时：未完成的 future 标记为失败，下轮继续重试
                                     unfinished = set(retry_futures.keys()) - done_futures
@@ -946,6 +983,8 @@ class StockKlineSpider:
                             retry_total = len(remaining)
                             retry_done = 0
                             retry_success = 0
+                            retry_filtered = 0
+                            retry_failed = 0
                             for retry_code in list(remaining):
                                 retry_done += 1
                                 retry_timeout = 180
@@ -968,12 +1007,22 @@ class StockKlineSpider:
                                     finally:
                                         signal.alarm(0)
                                         signal.signal(signal.SIGALRM, old_handler)
+                                except TimeoutError as e:
+                                    # 单只股票计算超时（signal.alarm 触发）：属可重试瞬时失败
+                                    retry_res = {
+                                        'stock_code': retry_code,
+                                        'stock_name': retry_code,
+                                        'skip': True,
+                                        'reason': '超时',
+                                    }
                                 except Exception as e:
+                                    # 其它异常：按“出错了才算失败”定义为失败（不重试）
                                     retry_res = {
                                         'stock_code': retry_code,
                                         'stock_name': retry_code,
                                         'skip': True,
                                         'reason': str(e),
+                                        'error': str(e),
                                     }
 
                                 try:
@@ -988,19 +1037,24 @@ class StockKlineSpider:
                                 else:
                                     results[retry_code] = (retry_code, retry_res.get('stock_name') or retry_code, None)
 
-                                if retry_res.get('skip'):
+                                outcome = _classify_retry_outcome(retry_res)
+                                if outcome == 'retry':
                                     next_remaining.add(retry_code)
-                                else:
+                                elif outcome == 'failed':
+                                    retry_failed += 1
+                                else:  # success（含 filtered：拿到数据即算成功）
                                     retry_success += 1
+                                    if outcome == 'filtered':
+                                        retry_filtered += 1
 
                                 if retry_done == 1 or retry_done % 50 == 0 or retry_done == retry_total:
-                                    self.logger.warning(f"重试进度: {retry_done}/{retry_total} 只，成功 {retry_success}")
+                                    self.logger.warning(f"重试进度: {retry_done}/{retry_total} 只，成功 {retry_success}（含过滤 {retry_filtered}），失败 {retry_failed}")
 
-                            self.logger.warning(f"串行重试完成：{retry_success}/{retry_total} 只成功，{len(next_remaining)} 只仍失败")
+                            self.logger.warning(f"串行重试完成：成功 {retry_success} 只（含过滤 {retry_filtered}），失败 {retry_failed} 只（其中待重试 {len(next_remaining)} 只）")
 
                         remaining = next_remaining
                         if remaining:
-                            self.logger.error(f"K线拉取失败仍未恢复 {len(remaining)} 只（已重试 {r}/{retry_rounds} 轮）")
+                            self.logger.error(f"拉取/超时/卡死仍未恢复 {len(remaining)} 只（已重试 {r}/{retry_rounds} 轮）")
 
                     if pool_broken:
                         raise BrokenProcessPool(pool_broken_reason or "process pool broken")
