@@ -20,6 +20,14 @@ import time
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
 sys.path.insert(0, PROJECT_ROOT)
 sys.path.insert(0, os.path.join(PROJECT_ROOT, 'Spiders'))
+import sys as _sys, os as _os
+_p = _os.path.dirname(_os.path.abspath(__file__))
+while _p and _p != _os.path.dirname(_p) and not _os.path.isdir(_os.path.join(_p, 'Spiders')):
+    _p = _os.path.dirname(_p)
+if _p and _os.path.isdir(_os.path.join(_p, 'Spiders')) and _p not in _sys.path:
+    _sys.path.insert(0, _p)
+from Spiders.common.log import get_logger
+logger = get_logger(__name__)
 
 from Spiders.spiders.stock_config import KLINE_API, KLINE_FIELD_MAPPING, STOCK_PREFIX_MAP, HEADERS, DATA_SOURCE
 from Spiders.spiders.baostock_helper import fetch_kline_data_baostock_simple
@@ -207,7 +215,7 @@ def fetch_kline_data_eastmoney(stock_code, start_date, end_date, verbose=False):
         prefix = STOCK_PREFIX_MAP.get(stock_code[:2])
         if not prefix:
             if verbose:
-                print(f"    错误: 不支持的股票代码前缀: {stock_code[:2]}")
+                logger.info(f"    错误: 不支持的股票代码前缀: {stock_code[:2]}")
             return None
         
         # 构建API请求参数
@@ -226,7 +234,7 @@ def fetch_kline_data_eastmoney(stock_code, start_date, end_date, verbose=False):
         url = f"{KLINE_API['base_url']}?" + "&".join([f"{k}={v}" for k, v in params.items()])
         
         if verbose:
-            print(f"    请求URL: {url}")
+            logger.info(f"    请求URL: {url}")
         
         # 发送请求
         req = urllib.request.Request(url, headers=HEADERS)
@@ -242,15 +250,15 @@ def fetch_kline_data_eastmoney(stock_code, start_date, end_date, verbose=False):
                 
                 if not klines:
                     if verbose:
-                        print(f"    警告: klines为空数组，可能是日期范围内没有数据")
-                        print(f"    尝试不指定日期范围...")
+                        logger.info(f"    警告: klines为空数组，可能是日期范围内没有数据")
+                        logger.info(f"    尝试不指定日期范围...")
                     # 如果指定日期范围没有数据，尝试不指定日期范围
                     if start_date or end_date:
                         return fetch_kline_data_eastmoney(stock_code, None, None, verbose=False)
                     return None
                 
                 if verbose:
-                    print(f"    获取到 {len(klines)} 条K线数据")
+                    logger.info(f"    获取到 {len(klines)} 条K线数据")
                 
                 # 将K线数据转换为DataFrame
                 kline_data = []
@@ -275,41 +283,41 @@ def fetch_kline_data_eastmoney(stock_code, start_date, end_date, verbose=False):
                     df.set_index('date', inplace=True)
                     df.index = pd.to_datetime(df.index)
                     if verbose:
-                        print(f"    DataFrame创建成功，共 {len(df)} 行")
+                        logger.info(f"    DataFrame创建成功，共 {len(df)} 行")
                     return df
                 else:
                     if verbose:
-                        print(f"    错误: DataFrame为空或缺少date列")
+                        logger.info(f"    错误: DataFrame为空或缺少date列")
             else:
                 if verbose:
                     error_msg = data.get('message', '未知错误')
-                    print(f"    错误: API返回数据格式不正确: {error_msg}")
+                    logger.info(f"    错误: API返回数据格式不正确: {error_msg}")
                     if 'data' in data:
-                        print(f"    data字段: {data.get('data')}")
+                        logger.info(f"    data字段: {data.get('data')}")
         
         return None
     except urllib.error.HTTPError as e:
         if verbose:
-            print(f"    HTTP错误: {e.code} - {e.reason}")
+            logger.info(f"    HTTP错误: {e.code} - {e.reason}")
             try:
                 error_body = e.read().decode('utf-8')
-                print(f"    错误详情: {error_body[:200]}")
+                logger.info(f"    错误详情: {error_body[:200]}")
             except:
                 pass
         return None
     except urllib.error.URLError as e:
         if verbose:
-            print(f"    网络错误: {str(e)}")
+            logger.info(f"    网络错误: {str(e)}")
         return None
     except json.JSONDecodeError as e:
         if verbose:
-            print(f"    JSON解析错误: {str(e)}")
+            logger.info(f"    JSON解析错误: {str(e)}")
         return None
     except Exception as e:
         if verbose:
             import traceback
-            print(f"    获取K线数据失败: {str(e)}")
-            print(f"    错误堆栈: {traceback.format_exc()}")
+            logger.info(f"    获取K线数据失败: {str(e)}")
+            logger.info(f"    错误堆栈: {traceback.format_exc()}")
         return None
 
 def main():
@@ -323,17 +331,17 @@ def main():
     
     args = parser.parse_args()
     
-    print("=" * 80)
-    print("开始补充现有数据库中的每日价格数据")
-    print("=" * 80)
-    print(f"延迟设置: {args.delay}秒/请求")
-    print(f"批次大小: {args.batch_size}只股票/批")
-    print("=" * 80)
+    logger.info("=" * 80)
+    logger.info("开始补充现有数据库中的每日价格数据")
+    logger.info("=" * 80)
+    logger.info(f"延迟设置: {args.delay}秒/请求")
+    logger.info(f"批次大小: {args.batch_size}只股票/批")
+    logger.info("=" * 80)
     
     # 确保表存在
-    print("\n检查数据库表...")
+    logger.info("\n检查数据库表...")
     ensure_table_exists()
-    print("✓ 数据库表检查完成")
+    logger.info("✓ 数据库表检查完成")
     
     # 获取所有缺少每日价格数据的信号
     signals = get_signals_without_daily_prices(
@@ -343,18 +351,18 @@ def main():
     )
     
     if not signals:
-        print("所有信号都已包含每日价格数据，无需补充")
+        logger.info("所有信号都已包含每日价格数据，无需补充")
         return
     
-    print(f"\n找到 {len(signals)} 个需要补充的信号")
+    logger.info(f"\n找到 {len(signals)} 个需要补充的信号")
     
     if args.dry_run:
-        print("\n需要补充的信号列表（dry-run模式，不会实际补充）：")
+        logger.info("\n需要补充的信号列表（dry-run模式，不会实际补充）：")
         for signal in signals[:10]:  # 只显示前10个
             signal_id, stock_code, stock_name, insert_date, insert_price = signal
-            print(f"  - ID {signal_id}: {stock_code} ({stock_name}), 日期: {insert_date}")
+            logger.info(f"  - ID {signal_id}: {stock_code} ({stock_name}), 日期: {insert_date}")
         if len(signals) > 10:
-            print(f"  ... 还有 {len(signals) - 10} 个信号")
+            logger.info(f"  ... 还有 {len(signals) - 10} 个信号")
         return
     
     # 按股票代码分组，批量处理
@@ -370,7 +378,7 @@ def main():
             'insert_price': insert_price
         })
     
-    print(f"涉及 {len(signals_by_stock)} 只股票\n")
+    logger.info(f"涉及 {len(signals_by_stock)} 只股票\n")
     
     # 处理每只股票
     total_processed = 0
@@ -383,12 +391,12 @@ def main():
         batch_end = min(batch_start + args.batch_size, total_stocks)
         batch = stock_list[batch_start:batch_end]
         
-        print(f"\n处理批次 {batch_start // args.batch_size + 1} (股票 {batch_start + 1}-{batch_end}/{total_stocks})")
-        print("-" * 80)
+        logger.info(f"\n处理批次 {batch_start // args.batch_size + 1} (股票 {batch_start + 1}-{batch_end}/{total_stocks})")
+        logger.info("-" * 80)
         
         for idx, (stock_code, stock_signals) in enumerate(batch, batch_start + 1):
-            print(f"\n[{idx}/{total_stocks}] 处理股票: {stock_code} ({stock_signals[0]['stock_name']})")
-            print(f"  需要处理 {len(stock_signals)} 个信号")
+            logger.info(f"\n[{idx}/{total_stocks}] 处理股票: {stock_code} ({stock_signals[0]['stock_name']})")
+            logger.info(f"  需要处理 {len(stock_signals)} 个信号")
             
             # 获取该股票的所有信号日期
             dates = [s['insert_date'] for s in stock_signals]
@@ -410,8 +418,8 @@ def main():
             start_date = start_date_dt.strftime("%Y-%m-%d")
             end_date = end_date_dt.strftime("%Y-%m-%d")
             
-            print(f"  需要K线数据范围: {start_date} 到 {end_date} (今天: {today.strftime('%Y-%m-%d')}, 范围: {(end_date_dt - start_date_dt).days}天)")
-            print(f"  说明: 每只股票只获取一次K线数据，然后为每个信号提取其后30天的价格数据")
+            logger.info(f"  需要K线数据范围: {start_date} 到 {end_date} (今天: {today.strftime('%Y-%m-%d')}, 范围: {(end_date_dt - start_date_dt).days}天)")
+            logger.info(f"  说明: 每只股票只获取一次K线数据，然后为每个信号提取其后30天的价格数据")
             
             # 获取K线数据（第一个股票使用verbose模式，便于调试）
             verbose = (idx == 1)
@@ -419,23 +427,23 @@ def main():
             
             # 如果指定日期范围没有数据，尝试不指定日期范围（获取所有可用数据）
             if (df is None or df.empty) and verbose:
-                print(f"  尝试不指定日期范围获取数据...")
+                logger.info(f"  尝试不指定日期范围获取数据...")
                 df = fetch_kline_data_for_backfill(stock_code, None, None, verbose=True)
             
             if df is None or df.empty:
-                print(f"  ✗ 无法获取 {stock_code} 的K线数据，跳过")
+                logger.info(f"  ✗ 无法获取 {stock_code} 的K线数据，跳过")
                 # 如果第一个失败，再试一次并显示详细信息
                 if idx == 1:
-                    print(f"  重试获取 {stock_code} 的K线数据（详细模式）...")
+                    logger.info(f"  重试获取 {stock_code} 的K线数据（详细模式）...")
                     df = fetch_kline_data_for_backfill(stock_code, start_date, end_date, verbose=True)
                     if df is None or df.empty:
-                        print(f"  ✗ 重试仍然失败")
+                        logger.info(f"  ✗ 重试仍然失败")
                 total_failed += len(stock_signals)
                 # 添加延迟，避免请求过快
                 time.sleep(args.delay)
                 continue
             
-            print(f"  ✓ 获取到 {len(df)} 天的K线数据（所有信号共享此数据）")
+            logger.info(f"  ✓ 获取到 {len(df)} 天的K线数据（所有信号共享此数据）")
             
             # 处理每个信号：从共享的K线数据中提取该信号日期后30天的数据
             signal_success = 0
@@ -451,30 +459,30 @@ def main():
                 )
                 
                 if success:
-                    print(f"    ✓ 信号ID {signal['id']} ({signal['insert_date']}): {message}")
+                    logger.info(f"    ✓ 信号ID {signal['id']} ({signal['insert_date']}): {message}")
                     signal_success += 1
                     total_processed += 1
                 else:
-                    print(f"    ✗ 信号ID {signal['id']} ({signal['insert_date']}): {message}")
+                    logger.info(f"    ✗ 信号ID {signal['id']} ({signal['insert_date']}): {message}")
                     signal_failed += 1
                     total_failed += 1
             
-            print(f"  股票 {stock_code} 处理完成: 成功 {signal_success}, 失败 {signal_failed}")
+            logger.info(f"  股票 {stock_code} 处理完成: 成功 {signal_success}, 失败 {signal_failed}")
             
             # 添加延迟，避免请求过快
             time.sleep(args.delay)
         
         # 批次之间的延迟稍长
         if batch_end < total_stocks:
-            print(f"\n批次完成，等待 {args.delay * 2} 秒后继续下一批...")
+            logger.info(f"\n批次完成，等待 {args.delay * 2} 秒后继续下一批...")
             time.sleep(args.delay * 2)
     
-    print("\n" + "=" * 80)
-    print(f"补充完成！")
-    print(f"  成功: {total_processed} 个信号")
-    print(f"  失败: {total_failed} 个信号")
-    print(f"  成功率: {total_processed / (total_processed + total_failed) * 100:.2f}%")
-    print("=" * 80)
+    logger.info("\n" + "=" * 80)
+    logger.info(f"补充完成！")
+    logger.info(f"  成功: {total_processed} 个信号")
+    logger.info(f"  失败: {total_failed} 个信号")
+    logger.info(f"  成功率: {total_processed / (total_processed + total_failed) * 100:.2f}%")
+    logger.info("=" * 80)
 
 if __name__ == "__main__":
     main()

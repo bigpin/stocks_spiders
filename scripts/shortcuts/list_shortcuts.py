@@ -17,6 +17,14 @@ import os
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+import sys as _sys, os as _os
+_p = _os.path.dirname(_os.path.abspath(__file__))
+while _p and _p != _os.path.dirname(_p) and not _os.path.isdir(_os.path.join(_p, 'Spiders')):
+    _p = _os.path.dirname(_p)
+if _p and _os.path.isdir(_os.path.join(_p, 'Spiders')) and _p not in _sys.path:
+    _sys.path.insert(0, _p)
+from Spiders.common.log import get_logger
+logger = get_logger(__name__)
 
 from cloudbase_lib import CloudBaseClient, get_cloudbase_config, CloudBaseError
 
@@ -96,23 +104,23 @@ def main():
     try:
         client = get_client(args.dotenv)
     except Exception as e:
-        print(f"[ERROR] 连接云数据库失败: {e}")
+        logger.error(f"[ERROR] 连接云数据库失败: {e}")
         return 1
 
     items = list_shortcuts(client, args.keyword)
     if not items:
-        print("[INFO] 没有找到快捷方式")
+        logger.info("[INFO] 没有找到快捷方式")
         return 0
 
     print(f"\n{'名称':<20} {'点击':<8} {'_id':<26} 链接/说明")
-    print("-" * 90)
+    logger.info("-" * 90)
     for i in items:
         name = (i.get("name") or "")[:18]
         clicks = i.get("clickCount", 0)
         doc_id = (i.get("_id") or "")[:24]
         url = (i.get("url") or i.get("description") or "")[:40]
         print(f"{name:<20} {clicks:<8} {doc_id:<26} {url}")
-    print(f"\n共 {len(items)} 条")
+    logger.info(f"\n共 {len(items)} 条")
     return 0
 
 

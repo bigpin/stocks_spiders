@@ -18,6 +18,14 @@ import os
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+import sys as _sys, os as _os
+_p = _os.path.dirname(_os.path.abspath(__file__))
+while _p and _p != _os.path.dirname(_p) and not _os.path.isdir(_os.path.join(_p, 'Spiders')):
+    _p = _os.path.dirname(_p)
+if _p and _os.path.isdir(_os.path.join(_p, 'Spiders')) and _p not in _sys.path:
+    _sys.path.insert(0, _p)
+from Spiders.common.log import get_logger
+logger = get_logger(__name__)
 
 from cloudbase_lib import CloudBaseClient, get_cloudbase_config, CloudBaseError
 
@@ -69,7 +77,7 @@ def export_json(client: CloudBaseClient, path: str) -> None:
     items = _parse_data(resp)
     with open(path, "w", encoding="utf-8") as f:
         json.dump(items, f, ensure_ascii=False, indent=2)
-    print(f"[OK] 已导出 {len(items)} 条到 {path}")
+    logger.info(f"[OK] 已导出 {len(items)} 条到 {path}")
 
 
 def export_csv(client: CloudBaseClient, path: str) -> None:
@@ -84,14 +92,14 @@ def export_csv(client: CloudBaseClient, path: str) -> None:
         with open(path, "w", encoding="utf-8", newline="") as f:
             writer = csv.writer(f)
             writer.writerow(["_id", "name", "url", "icon", "keywords", "description", "clickCount", "createdAt", "updatedAt"])
-        print(f"[OK] 已导出 0 条到 {path}")
+        logger.info(f"[OK] 已导出 0 条到 {path}")
         return
     keys = ["_id", "name", "url", "icon", "keywords", "description", "clickCount", "createdAt", "updatedAt"]
     with open(path, "w", encoding="utf-8-sig", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=keys, extrasaction="ignore")
         writer.writeheader()
         writer.writerows(items)
-    print(f"[OK] 已导出 {len(items)} 条到 {path}")
+    logger.info(f"[OK] 已导出 {len(items)} 条到 {path}")
 
 
 def main():
@@ -104,7 +112,7 @@ def main():
     try:
         client = get_client(args.dotenv)
     except Exception as e:
-        print(f"[ERROR] 连接云数据库失败: {e}")
+        logger.error(f"[ERROR] 连接云数据库失败: {e}")
         return 1
 
     try:
@@ -114,13 +122,13 @@ def main():
             export_json(client, args.output)
     except CloudBaseError as e:
         if "not exist" in str(e).lower() or "-502005" in str(e):
-            print("[WARN] 集合 shortcut 不存在或为空")
+            logger.warning("[WARN] 集合 shortcut 不存在或为空")
             if not args.csv:
                 with open(args.output, "w", encoding="utf-8") as f:
                     json.dump([], f, ensure_ascii=False, indent=2)
-                print(f"[OK] 已写入空数组到 {args.output}")
+                logger.info(f"[OK] 已写入空数组到 {args.output}")
             return 0
-        print(f"[ERROR] 导出失败: {e}")
+        logger.error(f"[ERROR] 导出失败: {e}")
         return 1
     return 0
 

@@ -6,6 +6,14 @@
 """
 
 import sqlite3
+import sys as _sys, os as _os
+_p = _os.path.dirname(_os.path.abspath(__file__))
+while _p and _p != _os.path.dirname(_p) and not _os.path.isdir(_os.path.join(_p, 'Spiders')):
+    _p = _os.path.dirname(_p)
+if _p and _os.path.isdir(_os.path.join(_p, 'Spiders')) and _p not in _sys.path:
+    _sys.path.insert(0, _p)
+from Spiders.common.log import get_logger
+logger = get_logger(__name__)
 import os
 from datetime import datetime
 
@@ -23,7 +31,7 @@ def clean_old_data(db_path, year=2024):
         year: 要删除的年份，默认为2024
     """
     if not os.path.exists(db_path):
-        print(f"数据库文件不存在: {db_path}")
+        logger.info(f"数据库文件不存在: {db_path}")
         return
     
     try:
@@ -37,13 +45,13 @@ def clean_old_data(db_path, year=2024):
         cursor.execute("SELECT COUNT(*) FROM stock_data WHERE date LIKE ?", (f"{year}-%",))
         data_count_before = cursor.fetchone()[0]
         
-        print(f"\n数据库: {db_path}")
-        print(f"删除前统计:")
-        print(f"  stock_signals 表中 {year} 年的记录数: {signals_count_before}")
-        print(f"  stock_data 表中 {year} 年的记录数: {data_count_before}")
+        logger.info(f"\n数据库: {db_path}")
+        logger.info(f"删除前统计:")
+        logger.info(f"  stock_signals 表中 {year} 年的记录数: {signals_count_before}")
+        logger.info(f"  stock_data 表中 {year} 年的记录数: {data_count_before}")
         
         if signals_count_before == 0 and data_count_before == 0:
-            print(f"  没有找到 {year} 年的数据，无需删除")
+            logger.info(f"  没有找到 {year} 年的数据，无需删除")
             conn.close()
             return
         
@@ -58,21 +66,21 @@ def clean_old_data(db_path, year=2024):
         # 提交事务
         conn.commit()
         
-        print(f"\n删除结果:")
-        print(f"  已删除 stock_signals 记录: {signals_deleted} 条")
-        print(f"  已删除 stock_data 记录: {data_deleted} 条")
+        logger.info(f"\n删除结果:")
+        logger.info(f"  已删除 stock_signals 记录: {signals_deleted} 条")
+        logger.info(f"  已删除 stock_data 记录: {data_deleted} 条")
         
         # 执行 VACUUM 来回收空间
-        print(f"\n正在优化数据库...")
+        logger.info(f"\n正在优化数据库...")
         cursor.execute("VACUUM")
         conn.commit()
-        print(f"  数据库优化完成")
+        logger.info(f"  数据库优化完成")
         
         conn.close()
-        print(f"✓ 清理完成\n")
+        logger.info(f"✓ 清理完成\n")
         
     except Exception as e:
-        print(f"错误: 清理数据库时出错: {str(e)}")
+        logger.info(f"错误: 清理数据库时出错: {str(e)}")
         if conn:
             conn.rollback()
             conn.close()
@@ -86,37 +94,37 @@ def main():
         try:
             target_year = int(sys.argv[1])
         except ValueError:
-            print(f"错误: 无效的年份参数: {sys.argv[1]}")
-            print("用法: python clean_old_data.py [年份]")
-            print("示例: python clean_old_data.py 2024")
+            logger.info(f"错误: 无效的年份参数: {sys.argv[1]}")
+            logger.info("用法: python clean_old_data.py [年份]")
+            logger.info("示例: python clean_old_data.py 2024")
             return
     else:
         current_year = datetime.now().year
         target_year = current_year - 1  # 默认删除去年的数据
     
-    print("=" * 60)
-    print(f"清理数据库中 {target_year} 年的数据")
-    print("=" * 60)
+    logger.info("=" * 60)
+    logger.info(f"清理数据库中 {target_year} 年的数据")
+    logger.info("=" * 60)
     
     # 先显示将要删除的数据统计
-    print("\n⚠️  警告: 此操作将永久删除数据，无法恢复！")
-    print(f"即将删除 {target_year} 年的所有数据\n")
+    logger.info("\n⚠️  警告: 此操作将永久删除数据，无法恢复！")
+    logger.info(f"即将删除 {target_year} 年的所有数据\n")
     
     # 清理主数据库
     if os.path.exists(DB_PATH):
         clean_old_data(DB_PATH, target_year)
     else:
-        print(f"主数据库文件不存在: {DB_PATH}")
+        logger.info(f"主数据库文件不存在: {DB_PATH}")
     
     # 清理Web数据库
     if os.path.exists(WEB_DB_PATH):
         clean_old_data(WEB_DB_PATH, target_year)
     else:
-        print(f"Web数据库文件不存在: {WEB_DB_PATH}")
+        logger.info(f"Web数据库文件不存在: {WEB_DB_PATH}")
     
-    print("=" * 60)
-    print("所有数据库清理完成！")
-    print("=" * 60)
+    logger.info("=" * 60)
+    logger.info("所有数据库清理完成！")
+    logger.info("=" * 60)
 
 if __name__ == "__main__":
     main()

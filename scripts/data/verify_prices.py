@@ -6,6 +6,14 @@
 """
 
 import sqlite3
+import sys as _sys, os as _os
+_p = _os.path.dirname(_os.path.abspath(__file__))
+while _p and _p != _os.path.dirname(_p) and not _os.path.isdir(_os.path.join(_p, 'Spiders')):
+    _p = _os.path.dirname(_p)
+if _p and _os.path.isdir(_os.path.join(_p, 'Spiders')) and _p not in _sys.path:
+    _sys.path.insert(0, _p)
+from Spiders.common.log import get_logger
+logger = get_logger(__name__)
 import os
 import argparse
 from collections import defaultdict
@@ -102,9 +110,9 @@ def main():
     
     args = parser.parse_args()
     
-    print("=" * 80)
-    print("验证每日价格数据的补充结果")
-    print("=" * 80)
+    logger.info("=" * 80)
+    logger.info("验证每日价格数据的补充结果")
+    logger.info("=" * 80)
     
     stats, signals_without_prices, signals_incomplete = verify_daily_prices(
         stock_codes=args.stock_codes,
@@ -112,45 +120,45 @@ def main():
         end_date=args.end_date
     )
     
-    print(f"\n总体统计:")
-    print(f"  总信号数: {stats['total']}")
-    print(f"  有价格数据: {stats['with_prices']} ({stats['with_prices'] / stats['total'] * 100:.2f}%)")
-    print(f"  无价格数据: {stats['without_prices']} ({stats['without_prices'] / stats['total'] * 100:.2f}%)")
-    print(f"  完整数据(≥30天): {stats['complete']} ({stats['complete'] / stats['total'] * 100:.2f}%)")
-    print(f"  不完整数据(<30天): {stats['incomplete']} ({stats['incomplete'] / stats['total'] * 100:.2f}%)")
+    logger.info(f"\n总体统计:")
+    logger.info(f"  总信号数: {stats['total']}")
+    logger.info(f"  有价格数据: {stats['with_prices']} ({stats['with_prices'] / stats['total'] * 100:.2f}%)")
+    logger.info(f"  无价格数据: {stats['without_prices']} ({stats['without_prices'] / stats['total'] * 100:.2f}%)")
+    logger.info(f"  完整数据(≥30天): {stats['complete']} ({stats['complete'] / stats['total'] * 100:.2f}%)")
+    logger.info(f"  不完整数据(<30天): {stats['incomplete']} ({stats['incomplete'] / stats['total'] * 100:.2f}%)")
     
     if args.show_details:
-        print(f"\n按股票统计:")
+        logger.info(f"\n按股票统计:")
         for stock_code, stock_stats in sorted(stats['by_stock'].items()):
             total = stock_stats['total']
             with_prices = stock_stats['with_prices']
             without_prices = stock_stats['without_prices']
-            print(f"  {stock_code}:")
-            print(f"    总数: {total}, 有数据: {with_prices}, 无数据: {without_prices}")
+            logger.info(f"  {stock_code}:")
+            logger.info(f"    总数: {total}, 有数据: {with_prices}, 无数据: {without_prices}")
     
     if args.show_missing and signals_without_prices:
-        print(f"\n缺少价格数据的信号 ({len(signals_without_prices)} 个):")
+        logger.info(f"\n缺少价格数据的信号 ({len(signals_without_prices)} 个):")
         for signal in signals_without_prices[:20]:  # 只显示前20个
-            print(f"  - ID {signal['id']}: {signal['stock_code']} ({signal['stock_name']}), 日期: {signal['insert_date']}")
+            logger.info(f"  - ID {signal['id']}: {signal['stock_code']} ({signal['stock_name']}), 日期: {signal['insert_date']}")
         if len(signals_without_prices) > 20:
-            print(f"  ... 还有 {len(signals_without_prices) - 20} 个信号")
+            logger.info(f"  ... 还有 {len(signals_without_prices) - 20} 个信号")
     
     if args.show_incomplete and signals_incomplete:
-        print(f"\n数据不完整的信号 ({len(signals_incomplete)} 个):")
+        logger.info(f"\n数据不完整的信号 ({len(signals_incomplete)} 个):")
         for signal in signals_incomplete[:20]:  # 只显示前20个
-            print(f"  - ID {signal['id']}: {signal['stock_code']} ({signal['stock_name']}), "
+            logger.info(f"  - ID {signal['id']}: {signal['stock_code']} ({signal['stock_name']}), "
                   f"日期: {signal['insert_date']}, 天数: {signal['price_days']}")
         if len(signals_incomplete) > 20:
-            print(f"  ... 还有 {len(signals_incomplete) - 20} 个信号")
+            logger.info(f"  ... 还有 {len(signals_incomplete) - 20} 个信号")
     
-    print("\n" + "=" * 80)
+    logger.info("\n" + "=" * 80)
     
     # 返回退出码
     if stats['without_prices'] > 0:
-        print("警告: 仍有信号缺少价格数据，建议运行 backfill_daily_prices.py 补充")
+        logger.info("警告: 仍有信号缺少价格数据，建议运行 backfill_daily_prices.py 补充")
         return 1
     else:
-        print("✓ 所有信号都有价格数据")
+        logger.info("✓ 所有信号都有价格数据")
         return 0
 
 if __name__ == "__main__":

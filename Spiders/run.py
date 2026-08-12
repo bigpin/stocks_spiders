@@ -6,6 +6,8 @@ import threading
 import time
 import argparse
 
+from common.log import get_logger, get_fileonly_logger, PinnedProgress
+
 # 股票列表缓存配置
 STOCK_LIST_FILE = 'stock_list.txt'
 STOCK_LIST_CACHE_DAYS = 7  # 股票列表缓存天数（一周）
@@ -260,7 +262,7 @@ def run_stock_detail_spider(stock_file_path, log_file=None, target_date=None):
     log(f"[INFO] 估值文件路径: {output_file_path}")
     return True
 
-def run_stock_kline_spider_with_indicators(stock_codes, target_date=None, stock_file_path=None):
+def run_stock_kline_spider_with_indicators(stock_codes, target_date=None, stock_file_path=None, progress=None):
     """
     获取带技术指标的K线数据
 
@@ -268,6 +270,7 @@ def run_stock_kline_spider_with_indicators(stock_codes, target_date=None, stock_
         stock_codes: 股票代码
         target_date: 目标日期，格式 YYYYMMDD，如果为None则使用今天
         stock_file_path: 股票列表文件路径
+        progress: 可选的 PinnedProgress 实例，用于在控制台显示进度条+滚动日志
     """
     from spiders.stock_kline import StockKlineSpider
 
@@ -275,6 +278,7 @@ def run_stock_kline_spider_with_indicators(stock_codes, target_date=None, stock_
         use_file='true',
         stock_codes=stock_codes,
         calc_indicators=True,
+        progress=progress,
     )
     if target_date:
         kwargs['start_date'] = target_date
@@ -490,16 +494,11 @@ STOCK_CODES = (
 )
 
 def log_to_file(log_file, message, also_print=True):
-    """将消息写入日志文件，同时可选地打印到控制台"""
-    try:
-        with open(log_file, 'a', encoding='utf-8') as f:
-            timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-            f.write(f"[{timestamp}] {message}\n")
-            f.flush()  # 立即刷新到磁盘
-    except Exception as e:
-        print(f"警告: 无法写入日志文件: {e}", file=sys.stderr)
+    """将消息写入日志文件；also_print=True 时同时输出到控制台（rich 彩色分级）"""
     if also_print:
-        print(message)
+        get_logger('run', log_file).info(message)
+    else:
+        get_fileonly_logger(log_file).info(message)
 
 
 def wait_for_network(log_file=None, timeout=5, check_interval=5, max_checks=120):
@@ -516,7 +515,7 @@ def wait_for_network(log_file=None, timeout=5, check_interval=5, max_checks=120)
         "http://connectivitycheck.platform.hicloud.com/generate_204",
         "https://www.qq.com/",
     ]
-    message = "[STEP 0.9] 网络状态检查：等待网络恢复"
+    message = "[STEP 2] 网络状态检查：等待网络恢复"
     if log_file:
         log_to_file(log_file, message)
 
@@ -525,7 +524,7 @@ def wait_for_network(log_file=None, timeout=5, check_interval=5, max_checks=120)
             try:
                 opener.open(url, timeout=timeout)
                 if log_file:
-                    log_to_file(log_file, "[STEP 0.9] 网络已恢复")
+                    log_to_file(log_file, "[STEP 2] 网络已恢复")
                 return True
             except Exception:
                 continue
@@ -533,12 +532,12 @@ def wait_for_network(log_file=None, timeout=5, check_interval=5, max_checks=120)
         if log_file:
             log_to_file(
                 log_file,
-                f"[STEP 0.9] 网络仍未就绪，{check_interval}秒后重试 ({i}/{max_checks})",
+                f"[STEP 2] 网络仍未就绪，{check_interval}秒后重试 ({i}/{max_checks})",
             )
         time.sleep(check_interval)
 
     if log_file:
-        log_to_file(log_file, "[STEP 0.9] 等待网络超时，继续尝试执行任务")
+        log_to_file(log_file, "[STEP 2] 等待网络超时，继续尝试执行任务")
     return False
 
 
@@ -654,6 +653,11 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='股票数据爬虫脚本')
     parser.add_argument('--date', type=str, help='指定运行日期，格式：YYYYMMDD（例如：20240101）。如果不指定，默认运行今天的数据')
     parser.add_argument('--yesterday', action='store_true', help='运行昨天的数据（与 --date 参数互斥，如果同时指定，--date 优先）')
+    parser.add_argument('--no-progress', action='store_true',
+                        default=not sys.stdout.isatty(),
+                        help='禁用 PinnedProgress 进度条，改用普通日志输出（非终端环境会自动开启）')
+    parser.add_argument('--progress', action='store_true',
+                        help='强制启用 PinnedProgress 进度条（即使检测到非终端环境）')
     args = parser.parse_args()
     
     # 根据参数确定运行日期
@@ -703,20 +707,20 @@ if __name__ == "__main__":
     wait_for_network(log_file=log_file, max_checks=60)
 
     # 检查并更新股票列表（一周获取一次）
-    log_to_file(log_file, f"[STEP 1.5] 检查股票列表缓存...")
+    log_to_file(log_file, f"[STEP 3] 检查股票列表缓存...")
     # stock_list.txt 在项目根目录（run.py 的上一级目录）
     project_root = os.path.dirname(os.path.dirname(__file__))
     stock_file_path = os.path.join(project_root, STOCK_LIST_FILE)
     if is_stock_list_cache_valid(stock_file_path):
         file_mtime = datetime.fromtimestamp(os.path.getmtime(stock_file_path))
-        log_to_file(log_file, f"[STEP 1.5] 股票列表缓存有效，上次更新: {file_mtime.strftime('%Y-%m-%d %H:%M:%S')}")
+        log_to_file(log_file, f"[STEP 3] 股票列表缓存有效，上次更新: {file_mtime.strftime('%Y-%m-%d %H:%M:%S')}")
     else:
-        log_to_file(log_file, f"[STEP 1.5] 股票列表缓存已过期或不存在，开始更新...")
+        log_to_file(log_file, f"[STEP 3] 股票列表缓存已过期或不存在，开始更新...")
         run_stock_list_spider(force=False, log_file=log_file)
     
     # 估值数据已合并到 K 线阶段（baostock peTTM/pbMRQ），不再单独抓取
     detail_file_path = os.path.join(project_root, STOCK_DETAIL_FILE)
-    log_to_file(log_file, f"[STEP 1.7] 估值数据将在 K 线阶段从 peTTM/pbMRQ 字段自动生成，跳过独立估值抓取")
+    log_to_file(log_file, f"[STEP 4] 估值数据将在 K 线阶段从 peTTM/pbMRQ 字段自动生成，跳过独立估值抓取")
     
     # 统计本次将要处理的股票代码数量（优先从股票列表文件统计）
     try:
@@ -731,75 +735,87 @@ if __name__ == "__main__":
                 code_count = len(STOCK_CODES)
     except Exception as e:
         # 出现异常时退回用 STOCK_CODES 粗略统计，避免影响主流程
-        log_to_file(log_file, f"[STEP 1.5] 统计股票数量时出错: {e}，退回使用 STOCK_CODES 统计", also_print=False)
+        log_to_file(log_file, f"[STEP 3] 统计股票数量时出错: {e}，退回使用 STOCK_CODES 统计", also_print=False)
         if isinstance(STOCK_CODES, str):
             code_count = len([c for c in STOCK_CODES.split(',') if c.strip()])
         else:
             code_count = len(STOCK_CODES)
     
     # 运行获取带技术指标K线数据的爬虫
-    log_to_file(log_file, f"[STEP 2] 开始执行爬虫任务，股票代码数量: {code_count}，日期: {target_date}")
+    log_to_file(log_file, f"[STEP 5] 开始执行爬虫任务，股票代码数量: {code_count}，日期: {target_date}")
     try:
-        # 如果明确指定了日期参数，传入日期参数；否则使用默认（今天）
-        if date_specified:
-            run_stock_kline_spider_with_indicators(STOCK_CODES, target_date=target_date, stock_file_path=stock_file_path)
+        # 非终端/捕获输出环境下，PinnedProgress 的 Live 会被吞掉，改用普通日志输出。
+        # 默认只在真正的 TTY 终端显示进度条；--progress 强制开启，--no-progress 强制关闭。
+        use_progress = args.progress or (not args.no_progress and sys.stdout.isatty())
+        if use_progress:
+            # 用 PinnedProgress 接管控制台输出：底部进度条 + 上方滚动日志
+            run_logger = get_logger('run', log_file)
+            with PinnedProgress("股票数据爬虫", pin='bottom').bind(run_logger) as pp:
+                # 如果明确指定了日期参数，传入日期参数；否则使用默认（今天）
+                if date_specified:
+                    run_stock_kline_spider_with_indicators(STOCK_CODES, target_date=target_date, stock_file_path=stock_file_path, progress=pp)
+                else:
+                    run_stock_kline_spider_with_indicators(STOCK_CODES, stock_file_path=stock_file_path, progress=pp)
         else:
-            run_stock_kline_spider_with_indicators(STOCK_CODES, stock_file_path=stock_file_path)
-        log_to_file(log_file, "[STEP 2] 爬虫任务执行完成（正常退出）")
+            if date_specified:
+                run_stock_kline_spider_with_indicators(STOCK_CODES, target_date=target_date, stock_file_path=stock_file_path, progress=None)
+            else:
+                run_stock_kline_spider_with_indicators(STOCK_CODES, stock_file_path=stock_file_path, progress=None)
+        log_to_file(log_file, "[STEP 5] 爬虫任务执行完成（正常退出）")
     except SystemExit as e:
-        log_to_file(log_file, f"[STEP 2] 爬虫任务执行完成（SystemExit，退出码: {e.code if hasattr(e, 'code') else 'N/A'}）")
+        log_to_file(log_file, f"[STEP 5] 爬虫任务执行完成（SystemExit，退出码: {e.code if hasattr(e, 'code') else 'N/A'}）")
     except Exception as e:
-        log_to_file(log_file, f"[STEP 2] [ERROR] 爬虫任务执行出错: {e}", also_print=False)
+        log_to_file(log_file, f"[STEP 5] [ERROR] 爬虫任务执行出错: {e}", also_print=False)
         import traceback
         error_trace = traceback.format_exc()
-        log_to_file(log_file, f"[STEP 2] [ERROR] 错误详情:\n{error_trace}", also_print=False)
+        log_to_file(log_file, f"[STEP 5] [ERROR] 错误详情:\n{error_trace}", also_print=False)
         print(f"[ERROR] 爬虫任务执行出错: {e}", file=sys.stderr)
         traceback.print_exc()
     # 运行获取不带技术指标K线数据的爬虫
     # run_stock_kline_spider_without_indicators()
 
     # 清理超过30天的日线价格数据
-    log_to_file(log_file, "[STEP 2.5] 清理过期日线数据...")
+    log_to_file(log_file, "[STEP 6] 清理过期日线数据...")
     try:
         cleanup_old_daily_prices(days=30, log_file=log_file)
     except Exception as e:
-        log_to_file(log_file, f"[STEP 2.5] [WARNING] 清理异常: {e}", also_print=False)
+        log_to_file(log_file, f"[STEP 6] [WARNING] 清理异常: {e}", also_print=False)
 
     # 爬虫运行完成后，上传信号分析报告到云数据库
     # 使用 try-finally 确保上传逻辑一定会执行
-    log_to_file(log_file, f"[STEP 3] 开始上传{date_desc}的信号分析报告到云数据库...")
+    log_to_file(log_file, f"[STEP 7] 开始上传{date_desc}的信号分析报告到云数据库...")
     try:
         log_to_file(log_file, "=" * 80)
         log_to_file(log_file, f"开始上传{date_desc}的信号分析报告到云数据库...")
         log_to_file(log_file, "=" * 80)
         
         # 使用目标日期上传报告
-        log_to_file(log_file, f"[STEP 3] 准备上传报告日期: {target_date}")
+        log_to_file(log_file, f"[STEP 7] 准备上传报告日期: {target_date}")
         upload_success = upload_daily_report_to_cloudbase(target_date, log_file=log_file)
         
         if upload_success:
-            log_to_file(log_file, f"[STEP 3] [OK] {date_desc}的信号分析报告上传完成")
+            log_to_file(log_file, f"[STEP 7] [OK] {date_desc}的信号分析报告上传完成")
         else:
-            log_to_file(log_file, f"[STEP 3] [WARNING] {date_desc}的信号分析报告上传失败，请检查日志")
+            log_to_file(log_file, f"[STEP 7] [WARNING] {date_desc}的信号分析报告上传失败，请检查日志")
         
         log_to_file(log_file, "=" * 80)
-        log_to_file(log_file, "[STEP 4] 开始同步 SQLite 到云数据库...")
+        log_to_file(log_file, "[STEP 8] 开始同步 SQLite 到云数据库...")
         try:
             sync_success = sync_sqlite_to_cloud(log_file=log_file)
             if sync_success:
-                log_to_file(log_file, f"[STEP 4] [OK] SQLite 同步完成")
+                log_to_file(log_file, f"[STEP 8] [OK] SQLite 同步完成")
             else:
-                log_to_file(log_file, f"[STEP 4] [WARNING] SQLite 同步失败，请检查日志")
+                log_to_file(log_file, f"[STEP 8] [WARNING] SQLite 同步失败，请检查日志")
         except Exception as sync_e:
-            log_to_file(log_file, f"[STEP 4] [ERROR] 同步异常: {sync_e}", also_print=False)
+            log_to_file(log_file, f"[STEP 8] [ERROR] 同步异常: {sync_e}", also_print=False)
 
         log_to_file(log_file, "=" * 80)
-        log_to_file(log_file, "[STEP 5] 所有任务执行完成")
+        log_to_file(log_file, "[STEP 9] 所有任务执行完成")
     except Exception as e:
-        log_to_file(log_file, f"[STEP 3] [ERROR] 上传报告时发生异常: {e}", also_print=False)
+        log_to_file(log_file, f"[STEP 7] [ERROR] 上传报告时发生异常: {e}", also_print=False)
         import traceback
         error_trace = traceback.format_exc()
-        log_to_file(log_file, f"[STEP 3] [ERROR] 错误详情:\n{error_trace}", also_print=False)
+        log_to_file(log_file, f"[STEP 7] [ERROR] 错误详情:\n{error_trace}", also_print=False)
         print(f"[ERROR] 上传报告时发生异常: {e}", file=sys.stderr)
         traceback.print_exc()
 import threading

@@ -29,6 +29,7 @@ from .signal_compute_worker import (
 from concurrent.futures import ProcessPoolExecutor, as_completed, wait, FIRST_COMPLETED, CancelledError
 from concurrent.futures.process import BrokenProcessPool
 from .technical_indicators import TechnicalIndicators
+from common.log import get_logger
 import sqlite3
 import bisect
 import time
@@ -89,13 +90,8 @@ class StockKlineSpider:
     
     def __init__(self, stock_codes=None, use_file=False, stock_file='stock_list.txt',
                  kline_type='daily', fq_type='forward', start_date=None, end_date=None,
-                 calc_indicators=True):
-        self.logger = logging.getLogger(__name__)
-        if not self.logger.handlers:
-            handler = logging.StreamHandler()
-            handler.setFormatter(logging.Formatter('[%(asctime)s] %(levelname)s %(message)s', datefmt='%Y-%m-%d %H:%M:%S'))
-            self.logger.addHandler(handler)
-            self.logger.setLevel(logging.INFO)
+                 calc_indicators=True, progress=None):
+        self.logger = get_logger(__name__)
         
         # 获取指定日期或当前日期
         self.current_date = datetime.strptime(end_date, "%Y%m%d") if end_date else datetime.now()
@@ -129,6 +125,9 @@ class StockKlineSpider:
         self.end_date = end_date if end_date else self.current_date.strftime("%Y%m%d")
             
         self.calc_indicators = calc_indicators
+        self.progress = progress
+        self._progress_task = None
+        self._progress_seen = set()
         self.kline_data = {}  # 用于临时存储K线数据
         self.fundamental_map = self._load_fundamental_cache()
         
@@ -624,11 +623,28 @@ class StockKlineSpider:
             pass
         
         self.conn.commit()
-    
+
+    def _start_progress(self):
+        """若传入了 PinnedProgress，则注册一个按股票数计量的任务。"""
+        if self.progress and self._progress_task is None:
+            self._progress_task = self.progress.add_task(
+                "拉取并计算K线", total=len(self.stock_codes)
+            )
+
+    def _advance_progress(self, code):
+        """按唯一股票代码推进进度条，避免重试/回退时重复计数。"""
+        if not self.progress or self._progress_task is None:
+            return
+        if code in self._progress_seen:
+            return
+        self._progress_seen.add(code)
+        self.progress.update(self._progress_task, advance=1)
+
     def run(self):
         # 多进程并行：每个进程独立连接 baostock，互不干扰，可真正并行
         workers = max(1, int(BAOSTOCK_FETCH_WORKERS))
         total = len(self.stock_codes)
+        self._start_progress()
         self.logger.warning(f"开始拉取 {total} 只股票，{workers} 进程并行，每 50 只打印进度")
         results = {}
         done = 0
@@ -654,6 +670,7 @@ class StockKlineSpider:
                     self.logger.warning(f"已拉取 {done}/{total} 只")
 
                 s_code, s_name, s_df = results[code]
+                self._advance_progress(code)
                 if s_df is not None and not s_df.empty:
                     self.process_kline_data(s_code, s_name, s_df)
 
@@ -793,6 +810,7 @@ class StockKlineSpider:
                             failed_kline_codes.add(code)
 
                         done += 1
+                        self._advance_progress(code)
                         if done == 1 or done % 50 == 0 or done == total:
                             self.logger.warning(f"已拉取+计算 {done}/{total} 只")
 
@@ -807,6 +825,7 @@ class StockKlineSpider:
                             f.cancel()
                             pending.discard(f)
                             results[code] = (code, code, None)
+                            self._advance_progress(code)
                             failed_kline_codes.add(code)
                             done += 1
                             consecutive_stuck += 1
@@ -825,6 +844,7 @@ class StockKlineSpider:
                                     if c:
                                         failed_kline_codes.add(c)
                                         results[c] = (c, c, None)
+                                        self._advance_progress(c)
                                         done += 1
                                 pending.clear()
 
@@ -853,6 +873,7 @@ class StockKlineSpider:
                                     if c:
                                         failed_kline_codes.add(c)
                                         results[c] = (c, c, None)
+                                        self._advance_progress(c)
                                         done += 1
                                 pending.clear()
                                 pool_broken = True
@@ -1088,6 +1109,7 @@ class StockKlineSpider:
                         res = {'stock_code': code, 'stock_name': code, 'skip': True, 'reason': str(e2)}
 
                     self._process_compute_result(res)
+                    self._advance_progress(code)
                     df = res.get('df')
                     if df is not None and hasattr(df, "empty") and not df.empty:
                         results[code] = (code, res.get('stock_name') or code, df.tail(1))
@@ -1119,12 +1141,15 @@ class StockKlineSpider:
                     code = futures[future]
                     try:
                         results[code] = future.result(timeout=120)
-                        if pool_broken:
+                        if not pool_broken:
+                            self._advance_progress(code)
+                        else:
                             # If pool already detected broken, still consume results quietly.
                             pass
                     except TimeoutError:
                         self.logger.error(f"拉取 {code} 超时(120s)，跳过")
                         results[code] = (code, None, None)
+                        self._advance_progress(code)
                     except Exception as e:
                         # If the process pool is broken (worker crash / IPC pipe broken),
                         # continuing to wait will produce大量重复错误。检测到后立刻回退串行。
@@ -1148,6 +1173,7 @@ class StockKlineSpider:
                         # Non-fatal per-stock error: keep going but avoid刷屏
                         self.logger.error(f"拉取 {code} 出错: {e}")
                         results[code] = (code, None, None)
+                        self._advance_progress(code)
                     done += 1
                     if done == 1 or done % 50 == 0 or done == total:
                         self.logger.warning(f"已拉取 {done}/{total} 只")
@@ -1169,6 +1195,7 @@ class StockKlineSpider:
                 except Exception as e2:
                     self.logger.error(f"拉取 {code} 出错: {e2}")
                     results[code] = (code, None, None)
+                self._advance_progress(code)
                 done += 1
                 if done == 1 or done % 50 == 0 or done == total:
                     self.logger.warning(f"已拉取 {done}/{total} 只")
@@ -1188,6 +1215,7 @@ class StockKlineSpider:
                 except Exception as e2:
                     self.logger.error(f"拉取 {code} 出错(串行): {e2}")
                     results[code] = (code, None, None)
+                self._advance_progress(code)
                 done += 1
                 if done == 1 or done % 50 == 0 or done == total:
                     self.logger.warning(f"已拉取 {done}/{total} 只")

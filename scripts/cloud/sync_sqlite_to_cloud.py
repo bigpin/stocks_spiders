@@ -21,6 +21,14 @@ from datetime import datetime, timedelta
 
 # 添加父目录到路径
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
+import sys as _sys, os as _os
+_p = _os.path.dirname(_os.path.abspath(__file__))
+while _p and _p != _os.path.dirname(_p) and not _os.path.isdir(_os.path.join(_p, 'Spiders')):
+    _p = _os.path.dirname(_p)
+if _p and _os.path.isdir(_os.path.join(_p, 'Spiders')) and _p not in _sys.path:
+    _sys.path.insert(0, _p)
+from Spiders.common.log import get_logger
+logger = get_logger(__name__)
 
 from cloudbase_lib.client import CloudBaseClient, get_cloudbase_config
 
@@ -47,11 +55,11 @@ def sync_signals(client: CloudBaseClient, rows, verbose=False):
             client.doc_set(collection='web_signals', doc_id=doc_id, data=data)
             ok += 1
             if verbose and (ok % 50 == 0):
-                print(f"  [signals] 已同步 {ok}/{len(rows)}")
+                logger.info(f"  [signals] 已同步 {ok}/{len(rows)}")
         except Exception as e:
             fail += 1
             if verbose:
-                print(f"  [signals] 失败 doc_id={doc_id}: {e}")
+                logger.info(f"  [signals] 失败 doc_id={doc_id}: {e}")
         time.sleep(0.1)  # 避免限流
     return ok, fail
 
@@ -68,11 +76,11 @@ def sync_daily_prices(client: CloudBaseClient, rows, verbose=False):
             client.doc_set(collection='web_daily_prices', doc_id=doc_id, data=data)
             ok += 1
             if verbose and (ok % 200 == 0):
-                print(f"  [daily_prices] 已同步 {ok}/{len(rows)}")
+                logger.info(f"  [daily_prices] 已同步 {ok}/{len(rows)}")
         except Exception as e:
             fail += 1
             if verbose:
-                print(f"  [daily_prices] 失败 doc_id={doc_id}: {e}")
+                logger.info(f"  [daily_prices] 失败 doc_id={doc_id}: {e}")
         time.sleep(0.1)
     return ok, fail
 
@@ -91,14 +99,14 @@ def cleanup_cloud_daily_prices(client: CloudBaseClient, days=30, verbose=False):
             resp = client.database_delete(query)
             deleted = resp.get('deleted', resp.get('stats', {}).get('removed', 0))
             if verbose:
-                print(f"  [cloud cleanup] 本轮删除 {deleted} 条")
+                logger.info(f"  [cloud cleanup] 本轮删除 {deleted} 条")
             total_deleted += deleted
             if deleted == 0:
                 break
             time.sleep(0.2)
         except Exception as e:
             if verbose:
-                print(f"  [cloud cleanup] 删除异常: {e}")
+                logger.info(f"  [cloud cleanup] 删除异常: {e}")
             break
 
     return total_deleted
@@ -130,23 +138,23 @@ def main():
     is_full = args.full or not args.incremental  # 默认全量，除非指定 --incremental
 
     if is_full:
-        print("[模式] 全量同步")
+        logger.info("[模式] 全量同步")
         cursor.execute("SELECT * FROM stock_signals")
         signal_rows = cursor.fetchall()
-        print(f"  stock_signals: {len(signal_rows)} 条")
+        logger.info(f"  stock_signals: {len(signal_rows)} 条")
 
         if not args.skip_prices:
             cursor.execute("SELECT * FROM stock_signal_daily_prices")
             price_rows = cursor.fetchall()
-            print(f"  stock_signal_daily_prices: {len(price_rows)} 条")
+            logger.info(f"  stock_signal_daily_prices: {len(price_rows)} 条")
         else:
             price_rows = []
     else:
         cutoff = (datetime.now() - timedelta(days=args.days)).strftime('%Y-%m-%d')
-        print(f"[模式] 增量同步（{cutoff} 之后的数据）")
+        logger.info(f"[模式] 增量同步（{cutoff} 之后的数据）")
         cursor.execute("SELECT * FROM stock_signals WHERE insert_date >= ?", (cutoff,))
         signal_rows = cursor.fetchall()
-        print(f"  stock_signals: {len(signal_rows)} 条")
+        logger.info(f"  stock_signals: {len(signal_rows)} 条")
 
         if not args.skip_prices:
             # 同步关联的 daily_prices
@@ -160,7 +168,7 @@ def main():
                 price_rows = cursor.fetchall()
             else:
                 price_rows = []
-            print(f"  stock_signal_daily_prices: {len(price_rows)} 条")
+            logger.info(f"  stock_signal_daily_prices: {len(price_rows)} 条")
         else:
             price_rows = []
 
@@ -168,24 +176,24 @@ def main():
 
     # 清理云数据库中过期的日线数据
     if not args.skip_cleanup and not args.skip_prices:
-        print(f"\n清理云数据库中超过 {args.cleanup_days} 天的日线数据...")
+        logger.info(f"\n清理云数据库中超过 {args.cleanup_days} 天的日线数据...")
         t0 = time.time()
         deleted = cleanup_cloud_daily_prices(client, days=args.cleanup_days, verbose=args.verbose)
-        print(f"  清理完成: 删除 {deleted} 条, 耗时 {int(time.time() - t0)}s")
+        logger.info(f"  清理完成: 删除 {deleted} 条, 耗时 {int(time.time() - t0)}s")
 
     # 开始同步
-    print("\n开始同步 stock_signals → web_signals ...")
+    logger.info("\n开始同步 stock_signals → web_signals ...")
     t0 = time.time()
     sig_ok, sig_fail = sync_signals(client, signal_rows, verbose=args.verbose)
-    print(f"  完成: 成功 {sig_ok}, 失败 {sig_fail}, 耗时 {int(time.time() - t0)}s")
+    logger.info(f"  完成: 成功 {sig_ok}, 失败 {sig_fail}, 耗时 {int(time.time() - t0)}s")
 
     if not args.skip_prices and price_rows:
-        print("\n开始同步 stock_signal_daily_prices → web_daily_prices ...")
+        logger.info("\n开始同步 stock_signal_daily_prices → web_daily_prices ...")
         t0 = time.time()
         price_ok, price_fail = sync_daily_prices(client, price_rows, verbose=args.verbose)
-        print(f"  完成: 成功 {price_ok}, 失败 {price_fail}, 耗时 {int(time.time() - t0)}s")
+        logger.info(f"  完成: 成功 {price_ok}, 失败 {price_fail}, 耗时 {int(time.time() - t0)}s")
 
-    print(f"\n同步完成。")
+    logger.info(f"\n同步完成。")
 
 
 if __name__ == '__main__':

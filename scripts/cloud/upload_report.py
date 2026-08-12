@@ -21,6 +21,14 @@ from typing import Any, Dict, List
 
 # 添加父目录到路径，以便导入 cloudbase_lib
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
+import sys as _sys, os as _os
+_p = _os.path.dirname(_os.path.abspath(__file__))
+while _p and _p != _os.path.dirname(_p) and not _os.path.isdir(_os.path.join(_p, 'Spiders')):
+    _p = _os.path.dirname(_p)
+if _p and _os.path.isdir(_os.path.join(_p, 'Spiders')) and _p not in _sys.path:
+    _sys.path.insert(0, _p)
+from Spiders.common.log import get_logger
+logger = get_logger(__name__)
 
 from cloudbase_lib import (  # noqa: E402
     CloudBaseClient,
@@ -107,7 +115,7 @@ def main(argv: List[str]) -> int:
 
     file_path = os.path.abspath(args.file)
     if not os.path.exists(file_path):
-        print(f"[ERROR] file not found: {file_path}", file=sys.stderr)
+        logger.error(f"[ERROR] file not found: {file_path}")
         return 2
 
     dotenv = args.dotenv.strip()
@@ -126,11 +134,11 @@ def main(argv: List[str]) -> int:
     docs = build_docs(file_path)
     summary_cnt = sum(1 for d in docs if d.get("doc_type") == "stock_summary")
     event_cnt = sum(1 for d in docs if d.get("doc_type") == "signal_event")
-    print(f"[INFO] parsed docs: total={len(docs)}, summaries={summary_cnt}, events={event_cnt}")
+    logger.info(f"[INFO] parsed docs: total={len(docs)}, summaries={summary_cnt}, events={event_cnt}")
     if args.verbose:
         # print just first 2 docs to avoid spam
         for d in docs[:2]:
-            print(f"[DEBUG] sample_doc_id={d.get('_id')} type={d.get('doc_type')}")
+            logger.debug(f"[DEBUG] sample_doc_id={d.get('_id')} type={d.get('doc_type')}")
 
     if args.dry_run:
         return 0
@@ -146,14 +154,14 @@ def main(argv: List[str]) -> int:
         client.doc_set(collection=args.collection, doc_id=doc_id, data=payload)
         ok += 1
         if ok % 50 == 0:
-            print(f"[INFO] uploaded {ok}/{len(docs)} ...")
+            logger.info(f"[INFO] uploaded {ok}/{len(docs)} ...")
 
-    print(f"[OK] uploaded docs: {ok}")
+    logger.info(f"[OK] uploaded docs: {ok}")
 
     # 主动触发云端推送检查函数（checkStockSignals）
     try:
         report_date = report_date_from_filename(file_path)
-        print(f"[INFO] invoking cloud function checkStockSignals for date={report_date} ...")
+        logger.info(f"[INFO] invoking cloud function checkStockSignals for date={report_date} ...")
         fn_resp = client.call_function(
             name="checkStockSignals",
             data={
@@ -161,9 +169,9 @@ def main(argv: List[str]) -> int:
                 "reportDate": report_date,
             },
         )
-        print(f"[OK] cloud function checkStockSignals invoked, resp: {fn_resp}")
+        logger.info(f"[OK] cloud function checkStockSignals invoked, resp: {fn_resp}")
     except Exception as e:
-        print(f"[WARN] failed to invoke cloud function checkStockSignals: {e}", file=sys.stderr)
+        logger.error(f"[WARN] failed to invoke cloud function checkStockSignals: {e}")
         # 打印详细错误信息帮助诊断
         import traceback
         traceback.print_exc(file=sys.stderr)

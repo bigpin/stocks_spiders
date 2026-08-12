@@ -15,6 +15,14 @@
 """
 
 from __future__ import annotations
+import sys as _sys, os as _os
+_p = _os.path.dirname(_os.path.abspath(__file__))
+while _p and _p != _os.path.dirname(_p) and not _os.path.isdir(_os.path.join(_p, 'Spiders')):
+    _p = _os.path.dirname(_p)
+if _p and _os.path.isdir(_os.path.join(_p, 'Spiders')) and _p not in _sys.path:
+    _sys.path.insert(0, _p)
+from Spiders.common.log import get_logger
+logger = get_logger(__name__)
 
 import argparse
 import csv
@@ -180,12 +188,12 @@ def main():
     if args.limit and args.limit > 0:
         missing = missing[: args.limit]
 
-    print(f"[fill_stock_detail_data] total in stock_list: {len(all_codes)}")
-    print(f"[fill_stock_detail_data] existing csv rows: {len(existing)}")
-    print(f"[fill_stock_detail_data] missing to fetch: {len(missing)} (workers={args.workers}, retries={args.retries})")
+    logger.info(f"[fill_stock_detail_data] total in stock_list: {len(all_codes)}")
+    logger.info(f"[fill_stock_detail_data] existing csv rows: {len(existing)}")
+    logger.info(f"[fill_stock_detail_data] missing to fetch: {len(missing)} (workers={args.workers}, retries={args.retries})")
 
     if not missing:
-        print("[fill_stock_detail_data] nothing to do.")
+        logger.info("[fill_stock_detail_data] nothing to do.")
         return 0
 
     workers = max(1, int(args.workers))
@@ -205,7 +213,7 @@ def main():
             except Exception as e:
                 fetched_fail += 1
                 if i == 1 or i % 50 == 0 or i == len(missing):
-                    print(f"[fill_stock_detail_data] progress {i}/{len(missing)} ok={fetched_ok} fail={fetched_fail} (last_err={e})")
+                    logger.info(f"[fill_stock_detail_data] progress {i}/{len(missing)} ok={fetched_ok} fail={fetched_fail} (last_err={e})")
                 continue
 
             if row:
@@ -215,7 +223,7 @@ def main():
                 fetched_fail += 1
 
             if i == 1 or i % 50 == 0 or i == len(missing):
-                print(f"[fill_stock_detail_data] progress {i}/{len(missing)} ok={fetched_ok} fail={fetched_fail}")
+                logger.info(f"[fill_stock_detail_data] progress {i}/{len(missing)} ok={fetched_ok} fail={fetched_fail}")
 
     # 写回：按 stock_list 顺序输出，便于 diff
     tmp_path = args.out + ".tmp"
@@ -229,8 +237,8 @@ def main():
             w.writerow([r.get(k, "") for k in CSV_FIELDS])
 
     os.replace(tmp_path, args.out)
-    print(f"[fill_stock_detail_data] wrote: {args.out}")
-    print(f"[fill_stock_detail_data] final rows: {len(existing)} (ok_added={fetched_ok}, fail={fetched_fail})")
+    logger.info(f"[fill_stock_detail_data] wrote: {args.out}")
+    logger.info(f"[fill_stock_detail_data] final rows: {len(existing)} (ok_added={fetched_ok}, fail={fetched_fail})")
     return 0
 
 

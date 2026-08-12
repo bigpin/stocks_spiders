@@ -6,6 +6,14 @@
 """
 
 import os
+import sys as _sys, os as _os
+_p = _os.path.dirname(_os.path.abspath(__file__))
+while _p and _p != _os.path.dirname(_p) and not _os.path.isdir(_os.path.join(_p, 'Spiders')):
+    _p = _os.path.dirname(_p)
+if _p and _os.path.isdir(_os.path.join(_p, 'Spiders')) and _p not in _sys.path:
+    _sys.path.insert(0, _p)
+from Spiders.common.log import get_logger
+logger = get_logger(__name__)
 import sys
 import argparse
 from datetime import datetime, timedelta
@@ -47,8 +55,8 @@ def main():
     stock_file_path = os.path.join(PROJECT_ROOT, STOCK_LIST_FILE)
 
     if not force and is_cache_valid(stock_file_path, args.days):
-        print(f"[INFO] 股票列表缓存有效（{args.days} 天内），跳过更新。使用 --force 强制更新。")
-        print(f"      文件: {stock_file_path}")
+        logger.info(f"[INFO] 股票列表缓存有效（{args.days} 天内），跳过更新。使用 --force 强制更新。")
+        logger.info(f"      文件: {stock_file_path}")
         return 0
 
     # 保证能 import spiders
@@ -66,11 +74,11 @@ def main():
                         f.write(f"{code}\t{nm}\n")
                     else:
                         f.write(f"{code}\n")
-            print(f"[INFO] 股票列表已更新（baostock），共 {len(entries)} 只 -> {stock_file_path}")
+            logger.info(f"[INFO] 股票列表已更新（baostock），共 {len(entries)} 只 -> {stock_file_path}")
             return 0
-        print("[WARNING] baostock 返回空列表（可能为非交易日）")
+        logger.warning("[WARNING] baostock 返回空列表（可能为非交易日）")
     except Exception as e:
-        print(f"[WARNING] baostock 获取失败: {e}")
+        logger.warning(f"[WARNING] baostock 获取失败: {e}")
     return 1
 
 

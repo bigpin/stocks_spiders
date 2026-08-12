@@ -39,6 +39,14 @@ from typing import List, Optional
 
 # 添加父目录到路径，以便导入 cloudbase_lib
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
+import sys as _sys, os as _os
+_p = _os.path.dirname(_os.path.abspath(__file__))
+while _p and _p != _os.path.dirname(_p) and not _os.path.isdir(_os.path.join(_p, 'Spiders')):
+    _p = _os.path.dirname(_p)
+if _p and _os.path.isdir(_os.path.join(_p, 'Spiders')) and _p not in _sys.path:
+    _sys.path.insert(0, _p)
+from Spiders.common.log import get_logger
+logger = get_logger(__name__)
 
 from cloudbase_lib import CloudBaseClient, get_cloudbase_config, CloudBaseError
 
@@ -118,7 +126,7 @@ def list_switches(client: CloudBaseClient) -> List[dict]:
         return _parse_db_data(resp.get("data", []))
     except CloudBaseError as e:
         if "not exist" in str(e).lower() or "-502005" in str(e):
-            print(f"[WARN] 集合 {COLLECTION_NAME} 不存在，请先初始化")
+            logger.warning(f"[WARN] 集合 {COLLECTION_NAME} 不存在，请先初始化")
             return []
         raise
 
@@ -149,7 +157,7 @@ def set_switch(client: CloudBaseClient, tool_id: str, enabled: bool) -> bool:
         client.doc_set(collection=COLLECTION_NAME, doc_id=switch_id, data=data)
         return True
     except CloudBaseError as e:
-        print(f"[ERROR] 设置开关失败: {e}")
+        logger.error(f"[ERROR] 设置开关失败: {e}")
         return False
 
 
@@ -157,7 +165,7 @@ def init_switch(client: CloudBaseClient, tool_id: str, enabled: bool = True) -> 
     """初始化工具开关记录"""
     existing = get_switch(client, tool_id)
     if existing:
-        print(f"[INFO] 开关记录已存在: {tool_id} = {existing.get('enabled')}")
+        logger.info(f"[INFO] 开关记录已存在: {tool_id} = {existing.get('enabled')}")
         return True
     
     return set_switch(client, tool_id, enabled)
@@ -199,20 +207,20 @@ def main():
     
     try:
         client = get_client(args.dotenv)
-        print(f"[INFO] 已连接到云数据库")
+        logger.info(f"[INFO] 已连接到云数据库")
     except Exception as e:
-        print(f"[ERROR] 连接云数据库失败: {e}")
+        logger.error(f"[ERROR] 连接云数据库失败: {e}")
         return 1
     
     # 列出所有开关
     if args.list:
         switches = list_switches(client)
         if not switches:
-            print(f"[INFO] 没有找到任何开关记录")
-            print(f"[TIP] 使用 --init-all 初始化所有预定义工具的开关")
+            logger.info(f"[INFO] 没有找到任何开关记录")
+            logger.info(f"[TIP] 使用 --init-all 初始化所有预定义工具的开关")
         else:
             print(f"\n{'工具ID':<20} {'状态':<10} {'更新时间'}")
-            print("-" * 60)
+            logger.info("-" * 60)
             for sw in switches:
                 tool_id = sw.get("tool_id", "unknown")
                 enabled = sw.get("enabled", False)
@@ -224,9 +232,9 @@ def main():
     # 启用工具
     if args.enable:
         tool_id = args.enable
-        print(f"[INFO] 正在启用工具: {tool_id}")
+        logger.info(f"[INFO] 正在启用工具: {tool_id}")
         if set_switch(client, tool_id, True):
-            print(f"[OK] 工具 {tool_id} 已启用 ✅")
+            logger.info(f"[OK] 工具 {tool_id} 已启用 ✅")
             return 0
         else:
             return 1
@@ -234,9 +242,9 @@ def main():
     # 禁用工具
     if args.disable:
         tool_id = args.disable
-        print(f"[INFO] 正在禁用工具: {tool_id}")
+        logger.info(f"[INFO] 正在禁用工具: {tool_id}")
         if set_switch(client, tool_id, False):
-            print(f"[OK] 工具 {tool_id} 已禁用 ❌")
+            logger.info(f"[OK] 工具 {tool_id} 已禁用 ❌")
             return 0
         else:
             return 1
@@ -244,25 +252,25 @@ def main():
     # 初始化单个工具
     if args.init:
         tool_id = args.init
-        print(f"[INFO] 正在初始化工具开关: {tool_id}")
+        logger.info(f"[INFO] 正在初始化工具开关: {tool_id}")
         if init_switch(client, tool_id, enabled=True):
-            print(f"[OK] 工具 {tool_id} 开关已初始化（默认启用）")
+            logger.info(f"[OK] 工具 {tool_id} 开关已初始化（默认启用）")
             return 0
         else:
             return 1
     
     # 初始化所有预定义工具
     if args.init_all:
-        print(f"[INFO] 正在初始化所有预定义工具的开关...")
-        print(f"[INFO] 预定义工具列表: {SWITCH_CONTROLLED_TOOLS}")
+        logger.info(f"[INFO] 正在初始化所有预定义工具的开关...")
+        logger.info(f"[INFO] 预定义工具列表: {SWITCH_CONTROLLED_TOOLS}")
         
         success_count = 0
         for tool_id in SWITCH_CONTROLLED_TOOLS:
-            print(f"  - 初始化 {tool_id}...")
+            logger.info(f"  - 初始化 {tool_id}...")
             if init_switch(client, tool_id, enabled=True):
                 success_count += 1
         
-        print(f"[OK] 初始化完成: {success_count}/{len(SWITCH_CONTROLLED_TOOLS)}")
+        logger.info(f"[OK] 初始化完成: {success_count}/{len(SWITCH_CONTROLLED_TOOLS)}")
         return 0 if success_count == len(SWITCH_CONTROLLED_TOOLS) else 1
     
     return 0

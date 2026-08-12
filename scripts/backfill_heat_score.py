@@ -20,6 +20,14 @@ import sys
 _SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 _ROOT_DIR = os.path.dirname(_SCRIPT_DIR)
 sys.path.insert(0, _SCRIPT_DIR)
+import sys as _sys, os as _os
+_p = _os.path.dirname(_os.path.abspath(__file__))
+while _p and _p != _os.path.dirname(_p) and not _os.path.isdir(_os.path.join(_p, 'Spiders')):
+    _p = _os.path.dirname(_p)
+if _p and _os.path.isdir(_os.path.join(_p, 'Spiders')) and _p not in _sys.path:
+    _sys.path.insert(0, _p)
+from Spiders.common.log import get_logger
+logger = get_logger(__name__)
 
 DB_PATH = os.path.join(_ROOT_DIR, "stock_signals.db")
 
@@ -64,12 +72,12 @@ def _report_date_from_filename(file_path: str) -> str | None:
 def backfill(file_path: str, conn: sqlite3.Connection, dry_run: bool = False) -> tuple[int, int]:
     report_date = _report_date_from_filename(file_path)
     if not report_date:
-        print(f"[WARN] 无法从文件名提取日期，跳过: {file_path}")
+        logger.warning(f"[WARN] 无法从文件名提取日期，跳过: {file_path}")
         return 0, 0
 
     scores = _parse_heat_scores(file_path)
     if not scores:
-        print(f"[INFO] {file_path}: 未找到热度评分，跳过。")
+        logger.info(f"[INFO] {file_path}: 未找到热度评分，跳过。")
         return 0, 0
 
     cursor = conn.cursor()
@@ -89,7 +97,7 @@ def backfill(file_path: str, conn: sqlite3.Connection, dry_run: bool = False) ->
         for row in rows:
             sig_id, existing = row[0], row[1]
             if existing is not None:
-                print(f"  [SKIP] {stock_code} @ {report_date}: 已有评分 {existing}，跳过（新值 {score}）")
+                logger.info(f"  [SKIP] {stock_code} @ {report_date}: 已有评分 {existing}，跳过（新值 {score}）")
                 skipped += 1
                 continue
             if not dry_run:
@@ -97,7 +105,7 @@ def backfill(file_path: str, conn: sqlite3.Connection, dry_run: bool = False) ->
                     "UPDATE stock_signals SET trade_heat_score = ? WHERE id = ?",
                     (score, sig_id),
                 )
-            print(f"  {'[DRY]' if dry_run else '[OK] '} {stock_code} @ {report_date}: 评分 → {score}")
+            logger.info(f"  {'[DRY]' if dry_run else '[OK] '} {stock_code} @ {report_date}: 评分 → {score}")
             updated += 1
 
     if not dry_run:
@@ -113,7 +121,7 @@ def main() -> int:
     args = parser.parse_args()
 
     if not os.path.exists(args.db):
-        print(f"[ERROR] 数据库不存在: {args.db}", file=sys.stderr)
+        logger.error(f"[ERROR] 数据库不存在: {args.db}")
         return 2
 
     conn = sqlite3.connect(args.db)
@@ -123,15 +131,15 @@ def main() -> int:
     for fpath in args.files:
         fpath = os.path.abspath(fpath)
         if not os.path.exists(fpath):
-            print(f"[WARN] 文件不存在，跳过: {fpath}")
+            logger.warning(f"[WARN] 文件不存在，跳过: {fpath}")
             continue
-        print(f"\n── 处理 {os.path.basename(fpath)} ──")
+        logger.info(f"\n── 处理 {os.path.basename(fpath)} ──")
         u, s = backfill(fpath, conn, dry_run=args.dry_run)
         total_updated += u
         total_skipped += s
 
     conn.close()
-    print(f"\n完成：更新 {total_updated} 条，跳过 {total_skipped} 条。")
+    logger.info(f"\n完成：更新 {total_updated} 条，跳过 {total_skipped} 条。")
     return 0
 
 

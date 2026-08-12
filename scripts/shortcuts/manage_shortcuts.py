@@ -29,6 +29,14 @@ import urllib.request
 import uuid
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+import sys as _sys, os as _os
+_p = _os.path.dirname(_os.path.abspath(__file__))
+while _p and _p != _os.path.dirname(_p) and not _os.path.isdir(_os.path.join(_p, 'Spiders')):
+    _p = _os.path.dirname(_p)
+if _p and _os.path.isdir(_os.path.join(_p, 'Spiders')) and _p not in _sys.path:
+    _sys.path.insert(0, _p)
+from Spiders.common.log import get_logger
+logger = get_logger(__name__)
 
 from cloudbase_lib import CloudBaseClient, get_cloudbase_config, CloudBaseError
 
@@ -72,7 +80,7 @@ def fetch_icon_from_url(url: str) -> str:
         with urllib.request.urlopen(req, timeout=10) as resp:
             html = resp.read().decode("utf-8", errors="replace")
     except (urllib.error.URLError, OSError, Exception) as e:
-        print(f"[WARN] 抓取页面失败，跳过 icon: {e}")
+        logger.warning(f"[WARN] 抓取页面失败，跳过 icon: {e}")
         return ""
     # og:image
     m = re.search(r'<meta[^>]+property\s*=\s*["\']og:image["\'][^>]+content\s*=\s*["\']([^"\']+)["\']', html, re.I)
@@ -131,10 +139,10 @@ def add_shortcut(
     url = url.strip()
     icon = (icon or "").strip()
     if fetch_icon and not icon and (url.startswith("http://") or url.startswith("https://")):
-        print("[INFO] 正在从链接页抓取 icon...")
+        logger.info("[INFO] 正在从链接页抓取 icon...")
         icon = fetch_icon_from_url(url)
         if icon:
-            print(f"[INFO] 已抓取 icon: {icon[:80]}{'...' if len(icon) > 80 else ''}")
+            logger.info(f"[INFO] 已抓取 icon: {icon[:80]}{'...' if len(icon) > 80 else ''}")
     doc_id = _gen_id()
     data = {
         "name": name.strip(),
@@ -215,12 +223,12 @@ def main():
     try:
         client = get_client(args.dotenv)
     except Exception as e:
-        print(f"[ERROR] 连接云数据库失败: {e}")
+        logger.error(f"[ERROR] 连接云数据库失败: {e}")
         return 1
 
     if args.add:
         if not args.name or not args.url:
-            print("[ERROR] --add 需要 --name 和 --url")
+            logger.error("[ERROR] --add 需要 --name 和 --url")
             return 1
         doc_id = add_shortcut(
             client, args.name, args.url,
@@ -228,11 +236,11 @@ def main():
             icon=args.icon,
             fetch_icon=not args.no_fetch_icon,
         )
-        print(f"[OK] 已添加，_id: {doc_id}")
+        logger.info(f"[OK] 已添加，_id: {doc_id}")
         return 0
 
     if not args.id:
-        print("[ERROR] --update / --delete / --reset-clicks 需要 --id")
+        logger.error("[ERROR] --update / --delete / --reset-clicks 需要 --id")
         return 1
 
     if args.update:
@@ -245,27 +253,27 @@ def main():
                 description=args.description if args.description else None,
                 icon=args.icon if args.icon else None,
             )
-            print(f"[OK] 已更新 {args.id}")
+            logger.info(f"[OK] 已更新 {args.id}")
         except CloudBaseError as e:
-            print(f"[ERROR] 更新失败: {e}")
+            logger.error(f"[ERROR] 更新失败: {e}")
             return 1
         return 0
 
     if args.delete:
         try:
             delete_shortcut(client, args.id)
-            print(f"[OK] 已删除 {args.id}")
+            logger.info(f"[OK] 已删除 {args.id}")
         except CloudBaseError as e:
-            print(f"[ERROR] 删除失败: {e}")
+            logger.error(f"[ERROR] 删除失败: {e}")
             return 1
         return 0
 
     if args.reset_clicks:
         try:
             reset_clicks(client, args.id)
-            print(f"[OK] 已重置点击次数 {args.id}")
+            logger.info(f"[OK] 已重置点击次数 {args.id}")
         except CloudBaseError as e:
-            print(f"[ERROR] 重置失败: {e}")
+            logger.error(f"[ERROR] 重置失败: {e}")
             return 1
         return 0
 

@@ -8,6 +8,9 @@ ta>=0.11.0
 # Web 应用
 Flask>=3.0.0
 
+# 美化日志输出（rich 彩色分级日志）
+rich>=13.0.0
+
 # 其他工具
 backports.tarfile>=0.1.0
 

@@ -22,6 +22,14 @@ from typing import Any, Dict, List, Optional
 
 # 添加父目录到路径，以便导入 cloudbase_lib
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
+import sys as _sys, os as _os
+_p = _os.path.dirname(_os.path.abspath(__file__))
+while _p and _p != _os.path.dirname(_p) and not _os.path.isdir(_os.path.join(_p, 'Spiders')):
+    _p = _os.path.dirname(_p)
+if _p and _os.path.isdir(_os.path.join(_p, 'Spiders')) and _p not in _sys.path:
+    _sys.path.insert(0, _p)
+from Spiders.common.log import get_logger
+logger = get_logger(__name__)
 
 from cloudbase_lib import CloudBaseClient, CloudBaseError, get_cloudbase_config, make_report_id  # noqa: E402
 
@@ -113,7 +121,7 @@ def _delete_doc(client: CloudBaseClient, *, collection: str, doc_id: str) -> Non
 
 def cmd_delete_report(args: argparse.Namespace) -> int:
     if not args.yes:
-        print("[ERROR] delete is destructive. Add --yes to confirm.", file=sys.stderr)
+        logger.error("[ERROR] delete is destructive. Add --yes to confirm.")
         return 2
 
     cfg = get_cloudbase_config(dotenv_path=args.dotenv or None)
@@ -209,7 +217,7 @@ def cmd_export_report(args: argparse.Namespace) -> int:
     os.makedirs(os.path.dirname(out_path), exist_ok=True)
     with open(out_path, "w", encoding="utf-8") as f:
         json.dump(obj, f, ensure_ascii=False, indent=2)
-    print(f"[OK] exported to {out_path}")
+    logger.info(f"[OK] exported to {out_path}")
     return 0
 
 
