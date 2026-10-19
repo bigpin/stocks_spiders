@@ -51,4 +51,18 @@ Spiders/web/.shared/
 .codegraph/
 .workbuddy/
 .reasonix/
+.mimosa/
 .spiders.pid.lock
+
+# gapup 运行时数据与产物（数据库/WAL/模型/每日预测报告）
+data/
+models/
+*.db-shm
+*.db-wal
+gapup_predictions_*.txt
+
+# zcode 本机会话数据
+.zcode/
+
+# skill 运行时配额计数文件
+.baostock_quota.json*
