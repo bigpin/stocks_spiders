@@ -120,6 +120,44 @@ def fill_outcomes(conn, only_date=None):
         logger.info(f"{not_due} 条预测的次日尚未走完，正常待验证（不会请求外部数据源）")
     logger.info(f"回填完成 {filled}/{len(pending)}")
 
+    # 策略信号（跌停复苏/连续强势）的次日开盘验证
+    today2 = datetime.now().strftime('%Y-%m-%d')
+    sigs = conn.execute(
+        "SELECT signal_date, stock_code FROM strategy_signals WHERE t1_open_gap IS NULL").fetchall()
+    s_filled = s_notdue = 0
+    now_str2 = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    for sig_date, code in sigs:
+        if t1_date_of(sig_date) >= today2:
+            s_notdue += 1
+            continue
+        code_n = normalize_code(code)
+        r = next_trading_open_from_db(conn, code_n, sig_date)
+        if r is None:
+            r = next_trading_open_fallback(code_n, sig_date)
+        if r is None:
+            continue
+        t_close, t1_open, t1_date = r
+        gap = (t1_open / t_close - 1) * 100 if t_close else None
+        # 30分钟实测：拉 T+1 当天分钟线，算开盘->10:00 收益（验证卖出纪律的兑现度）
+        t1_30m = None
+        try:
+            from common import fetch_minute_window_eastmoney
+            m = fetch_minute_window_eastmoney(code_n, t1_date, t1_date)
+            if m is not None and not m.empty:
+                m30 = m[m['bar_start'] <= '10:00'].sort_values('bar_start')
+                if len(m30) >= 2:
+                    t1_30m = (float(m30['close'].iloc[-1]) / float(m30['open'].iloc[0]) - 1) * 100
+        except Exception as e:
+            logger.info(f"策略信号 {sig_date} {code_n}: 30分钟数据获取失败 {e}")
+        conn.execute(
+            "UPDATE strategy_signals SET t1_open_gap=?, t1_30m_ret=?, checked_at=? "
+            "WHERE signal_date=? AND stock_code=?",
+            (gap, t1_30m, now_str2, sig_date, code_n))
+        s_filled += 1
+    conn.commit()
+    if s_filled or s_notdue:
+        logger.info(f"策略信号验证：回填 {s_filled}，待验证 {s_notdue}")
+
 
 def report(conn):
     df = pd.read_sql(

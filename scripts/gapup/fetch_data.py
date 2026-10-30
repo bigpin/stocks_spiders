@@ -15,7 +15,7 @@ import argparse
 import os
 import sys
 import time
-from concurrent.futures import ProcessPoolExecutor, as_completed
+from concurrent.futures import ProcessPoolExecutor, wait
 from datetime import datetime, timedelta
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -215,44 +215,63 @@ def main():
     done = 0
     blacklist_streak = 0
     quota_aborted = False
-    with ProcessPoolExecutor(max_workers=args.workers) as ex:
+    # 不用 with：卡死时 with 退出的 shutdown(wait=True) 会跟着挂死；
+    # 改为显式管理，finally 里 wait=False + cancel_futures 强制退出
+    ex = ProcessPoolExecutor(max_workers=args.workers)
+    hung = False
+    try:
         futures = {ex.submit(_fetch_worker, c, args.start, args.end): c for c in codes}
-        for fut in as_completed(futures):
-            code = futures[fut]
-            try:
-                res = fut.result()
-            except Exception as e:
-                logger.warning(f"[{done + 1}] {code} worker异常: {e}")
-                continue
-            if res['error'] and is_blacklist_msg(res['error']):
-                blacklist_streak += 1
-                if blacklist_streak >= 3:
-                    logger.error(f"连续 {blacklist_streak} 只黑名单错误，终止本次抓取"
-                                 f"（已完成 {done} 只，进度已保存，解除后重跑即可续抓）。")
-                    break
-            if res['error'] and '每日请求配额' in res['error']:
-                logger.error(f"{res['error']}，终止本次抓取（已完成 {done} 只，"
-                             f"进度已保存，明日配额恢复后重跑即可续抓）。")
-                quota_aborted = True
+        pending = set(futures)
+        while pending:
+            # 30 分钟无任何一只完成 = worker 卡死（正常单只需 1-2 分钟），终止本轮
+            done, pending = wait(pending, timeout=1800)
+            if not done:
+                logger.error(f"30 分钟无任何进展，疑似 worker 卡死，终止剩余 {len(pending)} 只"
+                             f"（已完成 {done} 只，进度已保存，重跑即可续抓）。")
+                hung = True
                 break
-            if not res['error']:
-                blacklist_streak = 0
-            d_n, m_n = persist_result(conn, res)
-            done += 1
-            msg = f"[{done}/{len(codes)}] {code} 日线+{d_n} 分钟+{m_n}"
-            if res['error']:
-                logger.warning(f"{msg} 错误: {res['error']}")
+            for fut in done:
+                code = futures[fut]
+                try:
+                    res = fut.result()
+                except Exception as e:
+                    logger.warning(f"[{done + 1}] {code} worker异常: {e}")
+                    continue
+                if res['error'] and is_blacklist_msg(res['error']):
+                    blacklist_streak += 1
+                    if blacklist_streak >= 3:
+                        logger.error(f"连续 {blacklist_streak} 只黑名单错误，终止本次抓取"
+                                     f"（已完成 {done} 只，进度已保存，解除后重跑即可续抓）。")
+                        break
+                if res['error'] and '每日请求配额' in res['error']:
+                    logger.error(f"{res['error']}，终止本次抓取（已完成 {done} 只，"
+                                 f"进度已保存，明日配额恢复后重跑即可续抓）。")
+                    quota_aborted = True
+                    break
+                if not res['error']:
+                    blacklist_streak = 0
+                d_n, m_n = persist_result(conn, res)
+                done += 1
+                msg = f"[{done}/{len(codes)}] {code} 日线+{d_n} 分钟+{m_n}"
+                if res['error']:
+                    logger.warning(f"{msg} 错误: {res['error']}")
+                else:
+                    logger.info(msg)
+                if done % 20 == 0:
+                    logger.info(f"进度 {done}/{len(codes)}，已用时 {int(time.time() - t0)}s，"
+                                f"今日剩余配额 {baostock_quota_remaining()}")
             else:
-                logger.info(msg)
-            if done % 20 == 0:
-                logger.info(f"进度 {done}/{len(codes)}，已用时 {int(time.time() - t0)}s，"
-                            f"今日剩余配额 {baostock_quota_remaining()}")
+                continue
+            break  # 内层 break（黑名单/配额终止）时同步跳出外层
+    finally:
+        ex.shutdown(wait=False, cancel_futures=True)
 
     m_cnt = conn.execute("SELECT COUNT(*) FROM minute_bars").fetchone()[0]
     d_cnt = conn.execute("SELECT COUNT(*) FROM daily_bars").fetchone()[0]
     conn.close()
+    tail = "（本次因卡死提前终止）" if hung else ""
     logger.info(
-        f"抓取完成：{len(codes)} 只，用时 {int(time.time() - t0)}s；"
+        f"抓取结束{tail}：完成 {done}/{len(codes)} 只，用时 {int(time.time() - t0)}s；"
         f"库内 daily_bars={d_cnt} 行，minute_bars={m_cnt} 行")
 
 

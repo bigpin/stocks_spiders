@@ -208,6 +208,21 @@ CREATE TABLE IF NOT EXISTS candidates (
     PRIMARY KEY (date, stock_code)
 );
 
+CREATE TABLE IF NOT EXISTS strategy_signals (
+    signal_date TEXT NOT NULL,   -- 信号日（14:30买入日）
+    strategy TEXT NOT NULL,      -- 'limitdown_recover' / 'strong_continue'
+    stock_code TEXT NOT NULL,
+    stock_name TEXT,
+    prev_chg REAL,               -- 昨日涨幅（小数）
+    today_chg REAL,              -- 今日14:30涨幅（小数）
+    day_pos REAL,                -- 日内位置 0-1
+    created_at TEXT,
+    t1_open_gap REAL,            -- 次日开盘涨幅%（验证回填）
+    t1_30m_ret REAL,             -- 次日开盘->10:00收益%
+    checked_at TEXT,
+    PRIMARY KEY (signal_date, strategy, stock_code)
+);
+
 CREATE TABLE IF NOT EXISTS predictions (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     pred_date TEXT NOT NULL,   -- 预测运行日（决策日T）
@@ -548,6 +563,63 @@ def fetch_intraday_eastmoney(code, target_date=None, freq_min=5):
     return df
 
 
+def fetch_market_snapshot_eastmoney():
+    """东财全市场实时快照（1次/页请求，覆盖沪深京全部A股）。
+
+    返回 DataFrame: code(带前缀), name, price, pct_chg(今日涨幅小数),
+    high, low, open, preclose, amount(元)。
+    停牌/无价格的行为 NaN。
+    """
+    base = 'https://push2.eastmoney.com/api/qt/clist/get'
+    import urllib.parse
+    out = []
+    page = 1
+    pz = 100  # 该接口对匿名 token 单页上限实测仅 100，靠翻页取全（约55页）
+    while True:
+        params = {
+            'pn': page, 'pz': pz, 'po': 0, 'np': 1, 'fltt': 2, 'invt': 2,
+            'fid': 'f12',
+            'fs': 'm:0 t:6,m:0 t:80,m:1 t:2,m:1 t:23,m:0 t:81 s:2048',
+            'fields': 'f12,f14,f2,f15,f16,f17,f18,f6',
+            'ut': KLINE_API['ut'],
+        }
+        url = base + '?' + urllib.parse.urlencode(params)
+        time.sleep(0.4)
+        req = urllib.request.Request(url, headers=HEADERS)
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            data = json.loads(resp.read().decode('utf-8'))
+        diff = (data.get('data') or {}).get('diff')
+        if not diff:
+            break
+        for it in diff:
+            def _f(v):
+                try:
+                    return float(v)
+                except (TypeError, ValueError):
+                    return float('nan')
+            code6 = str(it.get('f12') or '')
+            if len(code6) != 6 or not code6.isdigit():
+                continue
+            mkt = code6[0]
+            prefix = 'bj' if code6[:2] in ('43', '83', '87', '92') else ('sh' if mkt == '6' else 'sz')
+            out.append({
+                'code': prefix + code6,
+                'name': str(it.get('f14') or ''),
+                'price': _f(it.get('f2')),
+                'high': _f(it.get('f15')),
+                'low': _f(it.get('f16')),
+                'open': _f(it.get('f17')),
+                'preclose': _f(it.get('f18')),
+                'amount': _f(it.get('f6')),
+            })
+        if len(diff) < pz:
+            break
+        page += 1
+    if not out:
+        return None
+    return pd.DataFrame(out)
+
+
 # ---------------------------------------------------------------------------
 # 新浪备用源（东财被临时限流时自动切换；字段口径一致：volume 股 / amount 元）
 # ---------------------------------------------------------------------------
@@ -647,8 +719,11 @@ def fetch_recent_daily_eastmoney(code, days=60):
     f51=date, f52=open, f53=close, f54=high, f55=low, f56=volume(手),
     f57=amount, f59=涨跌幅%, f60=涨跌额, f61=换手率。
     返回列: date/open/high/low/close/preclose/volume(股)/amount/turn/pct_chg。
+    注意：beg 必须给近期窗口——beg=0 时 lmt 会从上市首日开始返回（踩过坑）。
     """
-    klines = _eastmoney_kline(to_eastmoney_secid(code), KLINE_API['klt']['daily'], lmt=days)
+    beg = (datetime.now() - timedelta(days=int(days * 1.7))).strftime('%Y%m%d')
+    klines = _eastmoney_kline(to_eastmoney_secid(code), KLINE_API['klt']['daily'],
+                              lmt=days, beg=beg)
     if not klines:
         return None
     recs = []

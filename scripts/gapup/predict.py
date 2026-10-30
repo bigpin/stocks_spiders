@@ -100,19 +100,43 @@ def live_features_one(conn, code, today):
 
     # 盘中当日尚无日线行：用分钟数据聚合一根"今日bar"追加
     # （日线特征全部 shift(1) 用昨日及更早数据，不受影响；仅补齐 prev_close 链）
+    def _board_limit(c):
+        """按板块返回当日涨跌幅限制：60/00 主板 10%，30/68 创业板科创板 20%，北交所 30%。"""
+        c = normalize_code(c)
+        return 0.30 if c.startswith('bj') else (0.20 if c[:2] in ('30', '68') else 0.10)
+
+    tm = mdf[mdf['date'] == today]
+    if tm.empty:
+        return None, '今日无分钟bar'
+    # 跨源一致性守卫：库内昨收（baostock）与今日实时价（东财）在除权日/数据缺口时失配，
+    # 会算出超涨跌停限制的假涨幅（踩过 +27%/-17% 的坑）——失配即用东财日线修复缺口
+    first_open = float(tm['open'].iloc[0])
+    prev_close = float(ddf['close'].iloc[-1])
+    lim = _board_limit(code) + 0.01
+    if prev_close > 0 and abs(first_open / prev_close - 1) > lim:
+        try:
+            em = fetch_recent_daily_eastmoney(code, days=60)
+        except Exception:
+            em = None
+        if em is not None and len(em) >= 25:
+            ddf = em
+            logger.info(f"{code}: 库内昨收与实时价失配（开盘偏离超{lim*100:.0f}%），已用东财日线修复")
     if ddf['date'].iloc[-1] < today:
-        tm = mdf[mdf['date'] == today]
-        if not tm.empty:
-            nan = float('nan')
-            today_bar = pd.DataFrame([{
-                'date': today,
-                'open': float(tm['open'].iloc[0]), 'close': float(tm['close'].iloc[-1]),
-                'high': float(tm['high'].max()), 'low': float(tm['low'].min()),
-                'preclose': nan,
-                'volume': float(tm['volume'].sum()), 'amount': float(tm['amount'].sum()),
-                'turn': nan, 'pct_chg': nan,
-            }])
-            ddf = pd.concat([ddf, today_bar], ignore_index=True)
+        nan = float('nan')
+        today_bar = pd.DataFrame([{
+            'date': today,
+            'open': float(tm['open'].iloc[0]), 'close': float(tm['close'].iloc[-1]),
+            'high': float(tm['high'].max()), 'low': float(tm['low'].min()),
+            'preclose': nan,
+            'volume': float(tm['volume'].sum()), 'amount': float(tm['amount'].sum()),
+            'turn': nan, 'pct_chg': nan,
+        }])
+        ddf = pd.concat([ddf, today_bar], ignore_index=True)
+    # 修复后仍超限 → 数据不可信，弃用该股
+    t_open = float(tm['open'].iloc[0])
+    ref_close = float(ddf[ddf['date'] < today]['close'].iloc[-1]) if (ddf['date'] < today).any() else 0
+    if ref_close > 0 and abs(t_open / ref_close - 1) > lim:
+        return None, f'数据异常（开盘偏离昨收超{lim * 100:.0f}%，疑似除权或长缺口）'
 
     feats = compute_features(code, mdf, ddf)
     if feats is None or feats.empty:
@@ -144,7 +168,7 @@ def db_features_one(conn, code, target_date):
     return row.iloc[0], None
 
 
-def write_report(pred_date, pool_date, rows, out_path):
+def write_report(pred_date, pool_date, rows, out_path, scan_rows=None):
     """rows 按 prob 降序；TOP N 精选突出显示，其余为完整排名表。"""
     thr = CONFIG['gap_threshold_pct']
     top_n = CONFIG['top_n_output']
@@ -175,6 +199,61 @@ def write_report(pred_date, pool_date, rows, out_path):
         for i, r in enumerate(rows, 1):
             star = ' *' if i <= top_n else ''
             f.write(f"{i:3d}. {r['name']}({r['code']}) 概率 {r['prob'] * 100:.1f}%{star}\n")
+        if scan_rows is not None:
+            f.write("\n" + "=" * 70 + "\n◆ 策略信号（14:30 可买入，独立于候选池）\n")
+            names = {'limitdown_recover': '跌停复苏 [历史胜率72%/中位+1.4%]',
+                     'strong_continue': '连续强势 [历史胜率65%/中位+1.1%]'}
+            if not scan_rows:
+                f.write("今日无（跌停复苏/连续强势均未触发）\n")
+            for st, code, name, pchg, tchg, dpos in scan_rows:
+                f.write(
+                    f"\n- {name}({code})  {names.get(st, st)}\n"
+                    f"  昨日 {pchg * 100:+.1f}% → 今日 {tchg * 100:+.2f}%（日内位置 {dpos:.0%}）\n"
+                    f"  打法：14:30 买入，次日高开≥1% 竞价卖，否则 10:00 前冲高卖，绝不拿收盘\n")
+
+
+def scan_strategies(today):
+    """全市场扫描两个验证过的可买入策略（东财实时快照 + 库内昨日日线）。
+
+    - limitdown_recover 跌停复苏：昨跌≤-9.5% + 今14:30涨幅≥2% + 日内位置>0.75
+      （历史：复合退出中位 +1.43%、胜率72%、7/7年全正）
+    - strong_continue 连续强势：昨涨>3% + 今涨5~9.5%未封板 + 日内位置>0.85
+      （历史：中位 +1.13%、胜率65%、7/7年全正）
+    返回 [(strategy, code, name, prev_chg, today_chg, day_pos)]。
+    """
+    from common import fetch_market_snapshot_eastmoney
+    snap = fetch_market_snapshot_eastmoney()
+    if snap is None or snap.empty:
+        logger.warning("全市场快照获取失败，跳过策略扫描")
+        return []
+    conn = connect_db()
+    prev = pd.read_sql("""
+        SELECT stock_code, close / p_close - 1 AS prev_chg
+        FROM (SELECT stock_code, date, close,
+                     LAG(close) OVER (PARTITION BY stock_code ORDER BY date) AS p_close
+              FROM daily_bars)
+        WHERE date = (SELECT MAX(date) FROM daily_bars WHERE date < ?) AND p_close > 0
+    """, conn, params=(today,))
+    conn.close()
+    snap = snap.merge(prev, left_on='code', right_on='stock_code', how='left')
+    snap = snap.dropna(subset=['price', 'preclose', 'prev_chg'])
+    snap = snap[(snap['price'] > 0) & (snap['high'] > snap['low'])]
+    snap = snap[~snap['name'].str.contains('ST', na=False)]
+    snap['today_chg'] = snap['price'] / snap['preclose'] - 1
+    snap['day_pos'] = (snap['price'] - snap['low']) / (snap['high'] - snap['low'])
+    # 剔除昨日缺数据（prev_chg 为 NaN）与北交所（流动性差、规则不同）
+    snap = snap.dropna(subset=['today_chg', 'day_pos'])
+    snap = snap[~snap['code'].str.startswith('bj')]
+
+    out = []
+    ld = snap[(snap['prev_chg'] <= -0.095) & (snap['today_chg'] >= 0.02) & (snap['day_pos'] > 0.75)]
+    for r in ld.itertuples():
+        out.append(('limitdown_recover', r.code, r.name, r.prev_chg, r.today_chg, r.day_pos))
+    sc = snap[(snap['prev_chg'] > 0.03) & snap['today_chg'].between(0.05, 0.095)
+              & (snap['day_pos'] > 0.85) & (snap['amount'] > 5e7)]
+    for r in sc.itertuples():
+        out.append(('strong_continue', r.code, r.name, r.prev_chg, r.today_chg, r.day_pos))
+    return out
 
 
 def run_predict(args):
@@ -222,6 +301,18 @@ def run_predict(args):
         logger.info(f"[{i}/{len(cand)}] {code} {name}: 高开概率 {prob * 100:.1f}%")
 
     rows.sort(key=lambda r: r['prob'], reverse=True)
+
+    # 策略信号扫描（跌停复苏/连续强势，可买入族，独立于模型候选池）
+    scan = []
+    if not args.backtest:
+        try:
+            scan = scan_strategies(today)
+            for st, code, name, pchg, tchg, dpos in scan:
+                logger.info(f"策略信号[{st}] {name}({code}): 昨{pchg*100:+.1f}% "
+                            f"今{tchg*100:+.2f}% 位 {dpos:.0%}")
+        except Exception as e:
+            logger.warning(f"策略扫描失败: {e}")
+
     now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     for rank, r in enumerate(rows, 1):
         conn.execute(
@@ -229,12 +320,18 @@ def run_predict(args):
             "(pred_date, pool_date, stock_code, stock_name, prob, rank, created_at) "
             "VALUES (?,?,?,?,?,?,?)",
             (today, today, r['code'], r['name'], r['prob'], rank, now))
+    for st, code, name, pchg, tchg, dpos in scan:
+        conn.execute(
+            "INSERT OR REPLACE INTO strategy_signals "
+            "(signal_date, strategy, stock_code, stock_name, prev_chg, today_chg, day_pos, created_at) "
+            "VALUES (?,?,?,?,?,?,?,?)",
+            (today, st, code, name, pchg, tchg, dpos, now))
     conn.commit()
     conn.close()
 
     out = os.path.join(common.PROJECT_ROOT, f"gapup_predictions_{today.replace('-', '')}.txt")
-    write_report(today, today, rows, out)
-    logger.info(f"报告已写入 {out}；有效预测 {len(rows)}/{len(cand)} 只")
+    write_report(today, today, rows, out, scan_rows=scan)
+    logger.info(f"报告已写入 {out}；有效预测 {len(rows)}/{len(cand)} 只，策略信号 {len(scan)} 个")
 
 
 def main():
